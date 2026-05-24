@@ -1,0 +1,7 @@
+python-dotenv
+langchain-openai
+langgraph
+langchain-core
+langchain-community
+pypdf
+rank_bm25
