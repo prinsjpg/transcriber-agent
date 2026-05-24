@@ -1,0 +1,12 @@
+# Nasconde le chiavi API (FONDAMENTALE)
+.env
+
+# Nasconde i file di sistema di Python
+__pycache__/
+*.pyc
+
+# (Opzionale) Nasconde i tuoi file personali di test
+slide.pdf
+trascrizione.txt
+dispensa_perfetta.txt
+dispensa_perfetta.html

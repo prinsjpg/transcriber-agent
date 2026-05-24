@@ -1,0 +1,284 @@
+import os
+import re
+import time
+from dotenv import load_dotenv
+from typing import TypedDict
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import HumanMessage, SystemMessage
+from pypdf import PdfReader
+from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
+
+load_dotenv()
+
+# Configurazione universale tramite OpenRouter
+llm = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY_OWL_ALPHA"),  # Usa la chiave specifica per il modello scelto
+    model="openrouter/owl-alpha",  # Qui scrivi il nome del modello che vuoi usare
+    temperature=0.3,
+    max_tokens=8192, 
+    max_retries=5,
+    timeout=60
+)
+
+class GraphState(TypedDict):
+    testo_slide: str
+    trascrizione_grezza: str
+    trascrizione_pulita: str
+    memoria_precedente: str
+    documento_finale: str
+
+def estrai_testo_da_txt(percorso_file: str) -> str:
+    with open(percorso_file, 'r', encoding='utf-8') as file:
+        return file.read()
+
+def estrai_testo_da_pdf(percorso_file: str) -> str:
+    testo_estratto = ""
+    reader = PdfReader(percorso_file)
+    for numero_pagina, pagina in enumerate(reader.pages):
+        testo_estratto += f"\n--- Pagina {numero_pagina + 1} ---\n"
+        testo_estratto += pagina.extract_text()
+    return testo_estratto
+
+def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_parole: int = 150) -> list[str]:
+    parole = testo.split()
+    blocchi = []
+    passo = max_parole - overlap_parole
+    for i in range(0, len(parole), passo):
+        blocco = " ".join(parole[i : i + max_parole])
+        blocchi.append(blocco)
+        
+    print(f"[Info] Trascrizione divisa in {len(blocchi)} blocchi.")
+    print(f"[Info] Impostato overlap di sicurezza di {overlap_parole} parole tra i blocchi.")
+    return blocchi
+
+# --- NUOVA FUNZIONE DI IMPAGINAZIONE HTML/PDF ---
+def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_perfetta.html"):
+    def formatta_paragrafi(testo, classe_css=""):
+        class_attr = f' class="{classe_css}"' if classe_css else ""
+        paragrafi = testo.strip().split('\n\n')
+        html = ""
+        for p in paragrafi:
+            if p.strip() and p.strip() != "None" and p.strip() != "null":
+                html += f"<p{class_attr}>{p.strip()}</p>\n"
+        return html
+
+    def formatta_aneddoti(testo):
+        paragrafi = testo.strip().split('\n\n')
+        html = ""
+        for p in paragrafi:
+            testo_p = p.strip()
+            # Ignoriamo le frasi di cortesia dell'IA se non ci sono aneddoti
+            if testo_p and "non sono presenti digressioni" not in testo_p.lower():
+                html += f"""
+                <div class="anecdote-box">
+                    <div class="anecdote-title">💡 Spunto di Riflessione / Digressione</div>
+                    <p class="anecdote-content">{testo_p}</p>
+                </div>
+                """
+        return html
+
+    html_concetti = formatta_paragrafi(s1, "concept-text")
+    html_teoria = formatta_paragrafi(s2, "theory-text")
+    html_aneddoti = formatta_aneddoti(s3)
+
+    template_html = f"""<!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="UTF-8">
+        <title>Dispensa Universitaria Autonoma</title>
+        <style>
+            @page {{ size: A4; margin: 20mm 18mm; }}
+            body {{ font-family: 'Segoe UI', Helvetica, Arial, sans-serif; color: #2d3748; line-height: 1.6; background-color: #ffffff; margin: 0; padding: 0; }}
+            .container {{ max-width: 800px; margin: auto; }}
+            h1 {{ color: #1a365d; font-size: 22pt; border-bottom: 2px solid #2b6cb0; padding-bottom: 5px; margin-top: 40px; text-transform: uppercase; letter-spacing: 0.5px; }}
+            h2 {{ color: #2b6cb0; font-size: 15pt; margin-top: 35px; margin-bottom: 15px; border-left: 5px solid #2b6cb0; padding-left: 10px; }}
+            p {{ text-align: justify; text-justify: inter-word; margin-bottom: 14px; font-size: 11pt; }}
+            .concept-text {{ font-weight: 500; color: #2c5282; }}
+            .theory-text {{ color: #2d3748; }}
+            .anecdote-box {{ background-color: #fffaf0; border-left: 4px solid #dd6b20; padding: 15px 18px; margin: 20px 0; border-radius: 0 6px 6px 0; page-break-inside: avoid; }}
+            .anecdote-title {{ font-weight: bold; color: #dd6b20; font-size: 9.5pt; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }}
+            .anecdote-content {{ font-style: italic; color: #4a5568; margin: 0; font-size: 10.5pt; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Dispensa Ufficiale del Corso</h1>
+            <h2>1. Concetti Chiave e Nozioni Fondamentali</h2>
+            {html_concetti}
+            <h2>2. Spiegazione Dettagliata e Sviluppo</h2>
+            {html_teoria}
+            <h2>3. Ulteriori Spunti e Contenuti di Supporto</h2>
+            {html_aneddoti}
+        </div>
+    </body>
+    </html>
+    """
+
+    with open(nome_file, 'w', encoding='utf-8') as f:
+        f.write(template_html)
+    print(f"\n[✓] Layout grafico generato con successo in: {nome_file}")
+# ----------------------------------------------
+
+def nodo_correzione(state: GraphState) -> dict:
+    system_prompt = """Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
+    Usa il testo delle slide fornito per capire e correggere i termini tecnici storpiati.
+    REGOLE: Correggi la punteggiatura ma NON tagliare assolutamente nulla, NON riassumere per nessun motivo e mantieni il 100% del parlato originale."""
+    
+    user_prompt = f"-- SLIDE --\n{state['testo_slide']}\n-- TRASCRIZIONE --\n{state['trascrizione_grezza']}"
+    
+    risposta = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+    return {"trascrizione_pulita": risposta.content}
+
+def nodo_generazione(state: GraphState) -> dict:
+    system_prompt = """Sei un Tutor Universitario e uno Scrittore Tecnico iper-dettagliato. 
+    Stai analizzando un SINGOLO frammento di una lezione molto più ampia.
+    
+    REGOLE STILISTICHE E ANTI-SINTESI TASSATIVE: 
+    1. DIVIETO DI SINTESI: Espandi il testo in modo discorsivo, fluido ed ESTREMAMENTE LUNGO. Non usare mai uno stile telegrafico.
+    2. DIVIETO DI META-COMMENTI: Non usare MAI espressioni introduttive come "Questo blocco si apre con" o "Il frammento analizza". Tuffati immediatamente nella spiegazione come se stessi continuando un discorso già iniziato.
+    3. DIVIETO DI ELENCHI PUNTATI: Scrivi in forma discorsiva a paragrafi continui.
+    4. DIVIETO DI LOOP E SINONIMI (ANTI-ALLUCINAZIONE): Non creare MAI liste infinite di termini, sinonimi o parole chiave ripetitive. Sii analitico, razionale e discorsivo.
+    5. DIVIETO DI RIPETIZIONE (MEMORIA A STAFFETTA): Leggi attentamente il 'CONTESTO PRECEDENTE'. Se un concetto, un acronimo o una spiegazione è già presente lì, È SEVERAMENTE VIETATO rispiegarlo in questo blocco. Dai per scontato che il lettore lo sappia già e prosegui in avanti con il discorso.
+    
+    Estrai le informazioni da questo frammento e classificale usando ESATTAMENTE questi tre tag XML. Non usare titoli markdown, restituisci solo i tag compilati:
+    
+    <concetti>
+    (Scrivi un paragrafo discorsivo di 4 o 5 righe che faccia da introduzione narrativa ai temi trattati in questo blocco).
+    </concetti>
+    
+    <spiegazione>
+    (Spiegazione dettagliata. Inizia esattamente da dove si era interrotto il contesto precedente, senza ripetere).
+    </spiegazione>
+    
+    <digressioni>
+    (Raccogli qui tutti gli aneddoti e le storie).
+    </digressioni>"""
+    
+    user_prompt = f"""
+    --- CONTESTO PRECEDENTE (Cosa hai già scritto nel blocco precedente. NON RISPIEGARE QUESTE COSE) ---
+    {state['memoria_precedente']}
+    
+    --- SLIDE DI RIFERIMENTO ---
+    {state['testo_slide']}
+    
+    --- BLOCCO TRASCRIZIONE PULITA DA ELABORARE ORA ---
+    {state['trascrizione_pulita']}
+    """
+    
+    risposta = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+    return {"documento_finale": risposta.content}
+
+def costruisci_grafo():
+    workflow = StateGraph(GraphState)
+    workflow.add_node("correzione", nodo_correzione)
+    workflow.add_node("generazione", nodo_generazione)
+    workflow.add_edge(START, "correzione")
+    workflow.add_edge("correzione", "generazione")
+    workflow.add_edge("generazione", END)
+    return workflow.compile()
+
+if __name__ == "__main__":
+    app = costruisci_grafo()
+    
+    file_slide = "slide.pdf"
+    file_trascrizione = "trascrizione.txt"
+    
+    testo_slide_completo = estrai_testo_da_pdf(file_slide)
+    trascrizione_completa = estrai_testo_da_txt(file_trascrizione)
+
+    print("\n[RAG] Creazione motore di ricerca interno per le slide...")
+    pagine_slide = testo_slide_completo.split("\n--- Pagina ")
+    documenti_slide = [Document(page_content=f"Pagina {p}") for p in pagine_slide if p.strip()]
+    
+    motore_ricerca = BM25Retriever.from_documents(documenti_slide)
+    motore_ricerca.k = 3 
+    
+    blocchi_trascrizione = dividi_trascrizione_in_blocchi(trascrizione_completa, max_parole=1500, overlap_parole=150)
+    sezione_1, sezione_2, sezione_3 = "", "", ""
+    
+    memoria_storica = "Questo è il primo blocco, inizia l'introduzione."
+
+    print("\n--- AVVIO ELABORAZIONE SEQUENZIALE (TOTALMENTE BLINDATA) ---")
+    for indice, blocco in enumerate(blocchi_trascrizione, start=1):
+        print(f"\n---> Avvio Elaborazione Blocco {indice} di {len(blocchi_trascrizione)}...")
+        
+        slide_recuperate = motore_ricerca.invoke(blocco)
+        slide_rilevanti_per_blocco = "\n\n".join([doc.page_content for doc in slide_recuperate])
+        
+        input_stato = {
+            "testo_slide": slide_rilevanti_per_blocco,
+            "trascrizione_grezza": blocco, 
+            "trascrizione_pulita": "", 
+            "memoria_precedente": memoria_storica,
+            "documento_finale": ""
+        }
+        
+        successo = False
+        while not successo:
+            try:
+                risultato = app.invoke(input_stato)
+                tg = risultato["documento_finale"]
+                
+                m1 = re.search(r"<concetti>(.*?)</concetti>", tg, re.DOTALL | re.IGNORECASE)
+                m2 = re.search(r"<spiegazione>(.*?)</spiegazione>", tg, re.DOTALL | re.IGNORECASE)
+                m3 = re.search(r"<digressioni>(.*?)</digressioni>", tg, re.DOTALL | re.IGNORECASE)
+                
+                if m1 and m1.group(1).strip(): sezione_1 += m1.group(1).strip() + "\n\n"
+                if m2 and m2.group(1).strip(): sezione_2 += m2.group(1).strip() + "\n\n"
+                if m3 and m3.group(1).strip(): sezione_3 += m3.group(1).strip() + "\n\n"
+                if m2 and m2.group(1).strip(): 
+                    testo_spiegazione = m2.group(1).strip()
+                    memoria_storica = testo_spiegazione[-4000:]
+                
+                print(f"[✓] Blocco {indice} completato con successo!")
+                successo = True 
+                
+                if indice < len(blocchi_trascrizione):
+                    print("    [Pausa] Attesa di 15 secondi per non sovraccaricare il provider...")
+                    time.sleep(15)
+                    
+            except KeyboardInterrupt:
+                print("\n[STOP] Hai interrotto manualmente il programma.")
+                exit() 
+                
+            except Exception as e:
+                print(f"    [!] Il provider ha avuto un mancamento: {e}")
+                print(f"    [!] Niente panico. Pausa di 30 secondi e poi riprovo il Blocco {indice}...")
+                time.sleep(30)
+
+    # ==========================================
+    # FASE 3: REVISIONE FINALE E DEDUPLICAZIONE
+    # ==========================================
+    print("\n[REVISIONE FINALE] Lettura incrociata per eliminare i doppioni dalla Sezione 3...")
+    
+    prompt_revisione = f"""Sei un revisore editoriale spietato.
+    Qui sotto troverai due testi estratti da una lezione: la SEZIONE 2 (teoria e narrazione principale) e la SEZIONE 3 (digressioni extra).
+    Il tuo UNICO compito è leggere la SEZIONE 3 e CANCELLARE qualsiasi aneddoto, storia o concetto che è già stato raccontato nella SEZIONE 2.
+    Se un aneddoto nella SEZIONE 3 è un doppione (anche se raccontato con parole leggermente diverse), eliminalo del tutto. Se invece è una storia o una battuta nuova, mantienila.
+    
+    RESTITUISCI SOLO ED ESCLUSIVAMENTE IL TESTO PULITO DELLA SEZIONE 3. Non aggiungere nessun meta-commento, titolo o introduzione.
+    
+    --- SEZIONE 2 (Testo di riferimento - GIA' PERFETTO) ---
+    {sezione_2}
+    
+    --- SEZIONE 3 (Testo da pulire e filtrare) ---
+    {sezione_3}
+    """
+    
+    try:
+        risposta_revisore = llm.invoke([HumanMessage(content=prompt_revisione)])
+        sezione_3_pulita = risposta_revisore.content.strip()
+        print("[✓] Revisione completata! Doppioni eliminati con successo.")
+    except Exception as e:
+        print(f"[!] Errore durante la revisione finale ({e}). Uso la Sezione 3 originale.")
+        sezione_3_pulita = sezione_3
+
+    # ==========================================
+    # FASE 4: ESPORTAZIONE IN HTML/PDF
+    # ==========================================
+    salva_dispensa_html(sezione_1, sezione_2, sezione_3_pulita, "dispensa_perfetta.html")
+    
+    print("\n[SUCCESSO TOTALE] Pipeline completata. Apri 'dispensa_perfetta.html' nel browser e premi Ctrl+P per stampare in PDF!")
