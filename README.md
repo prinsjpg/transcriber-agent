@@ -13,3 +13,7 @@ Agente autonomo basato su LangGraph e LangChain che trasforma le trascrizioni gr
 1. Rinomina il file `.env.example` in `.env` e inserisci la tua API Key.
 2. Inserisci le tue slide come `slide.pdf` e la trascrizione come `trascrizione.txt`.
 3. Avvia lo script.
+
+## Esempi
+<img width="890" height="737" alt="esempio 1" src="https://github.com/user-attachments/assets/7f7b56dd-93e4-41f2-b18c-3a2a2a457f86" />
+<img width="887" height="670" alt="esempio 2" src="https://github.com/user-attachments/assets/6ae57e0e-4ae3-4062-8b79-41305e45afea" />
