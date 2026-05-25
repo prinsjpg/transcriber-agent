@@ -31,10 +31,6 @@ class GraphState(TypedDict):
     memoria_precedente: str
     documento_finale: str
 
-def estrai_testo_da_txt(percorso_file: str) -> str:
-    with open(percorso_file, 'r', encoding='utf-8') as file:
-        return file.read()
-
 def estrai_documenti_da_cartella_pdf(cartella: str) -> list[Document]:
     """
     Legge TUTTI i file PDF all'interno di una cartella e li trasforma 
@@ -208,13 +204,38 @@ def costruisci_grafo():
     workflow.add_edge("generazione", END)
     return workflow.compile()
 
+def estrai_testo_da_cartella_txt(cartella: str) -> str:
+    """
+    Legge tutti i file .txt all'interno di una cartella, li ordina alfabeticamente 
+    (es. parte1.txt, parte2.txt) e li unisce in un unico grande testo.
+    """
+    # Cerca tutti i file .txt e li mette in ordine alfabetico
+    file_trovati = sorted(glob.glob(f"{cartella}/*.txt"))
+    testo_totale = ""
+    
+    if not file_trovati:
+        print(f"[!] Nessun file TXT trovato nella cartella '{cartella}'.")
+        return ""
+        
+    for percorso_file in file_trovati:
+        nome_file = os.path.basename(percorso_file)
+        print(f"    - Aggiungo trascrizione: {nome_file}")
+        
+        with open(percorso_file, 'r', encoding='utf-8') as file:
+            # Aggiunge il testo e un paio di a capo per separare nettamente le parti
+            testo_totale += f"\n\n--- INIZIO {nome_file} ---\n\n"
+            testo_totale += file.read() + "\n\n"
+            
+    return testo_totale
+
 if __name__ == "__main__":
     app = costruisci_grafo()
     
     cartella_slide = "slide_lezione"  # <--- NUOVA CARTELLA
-    file_trascrizione = "trascrizione.txt"
+    cartella_trascrizioni = "testi_lezione" # <--- NUOVA CARTELLA PER I TESTI
     
-    trascrizione_completa = estrai_testo_da_txt(file_trascrizione)
+    print(f"\n[FUSIONE] Lettura e unione delle trascrizioni nella cartella '{cartella_trascrizioni}'...")
+    trascrizione_completa = estrai_testo_da_cartella_txt(cartella_trascrizioni)
 
     print(f"\n[RAG] Lettura di tutti i PDF nella cartella '{cartella_slide}'...")
     documenti_slide = estrai_documenti_da_cartella_pdf(cartella_slide)
