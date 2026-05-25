@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import glob
 from dotenv import load_dotenv
 from typing import TypedDict
 from langchain_openai import ChatOpenAI
@@ -34,13 +35,31 @@ def estrai_testo_da_txt(percorso_file: str) -> str:
     with open(percorso_file, 'r', encoding='utf-8') as file:
         return file.read()
 
-def estrai_testo_da_pdf(percorso_file: str) -> str:
-    testo_estratto = ""
-    reader = PdfReader(percorso_file)
-    for numero_pagina, pagina in enumerate(reader.pages):
-        testo_estratto += f"\n--- Pagina {numero_pagina + 1} ---\n"
-        testo_estratto += pagina.extract_text()
-    return testo_estratto
+def estrai_documenti_da_cartella_pdf(cartella: str) -> list[Document]:
+    """
+    Legge TUTTI i file PDF all'interno di una cartella e li trasforma 
+    in documenti per il RAG, etichettando ogni pagina col nome del file originale.
+    """
+    documenti = []
+    # Cerca tutti i file .pdf nella cartella specificata
+    file_trovati = glob.glob(f"{cartella}/*.pdf")
+    
+    if not file_trovati:
+        print(f"[!] Nessun file PDF trovato nella cartella '{cartella}'.")
+        return []
+        
+    for percorso_file in file_trovati:
+        nome_file = os.path.basename(percorso_file)
+        reader = PdfReader(percorso_file)
+        
+        for numero_pagina, pagina in enumerate(reader.pages):
+            testo_pagina = pagina.extract_text()
+            if testo_pagina and testo_pagina.strip():
+                # Il RAG ora saprà esattamente da quale pacco di slide arriva la pagina!
+                contenuto = f"--- Fonte: {nome_file} - Pagina {numero_pagina + 1} ---\n{testo_pagina}"
+                documenti.append(Document(page_content=contenuto))
+                
+    return documenti
 
 def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_parole: int = 150) -> list[str]:
     parole = testo.split()
@@ -183,15 +202,13 @@ def costruisci_grafo():
 if __name__ == "__main__":
     app = costruisci_grafo()
     
-    file_slide = "slide.pdf"
+    cartella_slide = "slide_lezione"  # <--- NUOVA CARTELLA
     file_trascrizione = "trascrizione.txt"
     
-    testo_slide_completo = estrai_testo_da_pdf(file_slide)
     trascrizione_completa = estrai_testo_da_txt(file_trascrizione)
 
-    print("\n[RAG] Creazione motore di ricerca interno per le slide...")
-    pagine_slide = testo_slide_completo.split("\n--- Pagina ")
-    documenti_slide = [Document(page_content=f"Pagina {p}") for p in pagine_slide if p.strip()]
+    print(f"\n[RAG] Lettura di tutti i PDF nella cartella '{cartella_slide}'...")
+    documenti_slide = estrai_documenti_da_cartella_pdf(cartella_slide)
     
     motore_ricerca = BM25Retriever.from_documents(documenti_slide)
     motore_ricerca.k = 3 
