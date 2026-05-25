@@ -108,6 +108,14 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     <head>
         <meta charset="UTF-8">
         <title>Dispensa Universitaria Autonoma</title>
+
+        <script>
+            MathJax = {{
+                tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }}
+            }};
+        </script>
+        <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+        
         <style>
             @page {{ size: A4; margin: 20mm 18mm; }}
             body {{ font-family: 'Segoe UI', Helvetica, Arial, sans-serif; color: #2d3748; line-height: 1.6; background-color: #ffffff; margin: 0; padding: 0; }}
@@ -161,7 +169,8 @@ def nodo_generazione(state: GraphState) -> dict:
     3. DIVIETO DI ELENCHI PUNTATI: Scrivi in forma discorsiva a paragrafi continui.
     4. DIVIETO DI LOOP E SINONIMI (ANTI-ALLUCINAZIONE): Non creare MAI liste infinite di termini, sinonimi o parole chiave ripetitive. Sii analitico, razionale e discorsivo.
     5. DIVIETO DI RIPETIZIONE (MEMORIA A STAFFETTA): Leggi attentamente il 'CONTESTO PRECEDENTE'. Se un concetto, un acronimo o una spiegazione è già presente lì, È SEVERAMENTE VIETATO rispiegarlo in questo blocco. Dai per scontato che il lettore lo sappia già e prosegui in avanti con il discorso.
-    
+    6. FORMULE MATEMATICHE: Se il professore spiega una formula matematica, un'equazione o un teorema, DEVI obbligatoriamente ricostruire la formula esatta e scriverla nel testo utilizzando la sintassi LaTeX. Usa $ per le formule in linea e $$ per le formule centrate su una nuova riga. Non limitarti a raccontarla a parole.
+
     Estrai le informazioni da questo frammento e classificale usando ESATTAMENTE questi tre tag XML. Non usare titoli markdown, restituisci solo i tag compilati:
     
     <concetti>
