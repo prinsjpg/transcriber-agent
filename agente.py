@@ -15,9 +15,9 @@ load_dotenv()
 
 # Configurazione universale tramite OpenRouter
 llm = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY_OWL_ALPHA"),  # Usa la chiave specifica per il modello scelto
-    model="openrouter/owl-alpha",  # Qui scrivi il nome del modello che vuoi usare
+    base_url="https://api.xiaomimimo.com/v1",
+    api_key=os.environ.get("MIMO_API_KEY"),  # Usa la chiave specifica per il modello scelto
+    model="mimo-v2.5-pro",  # Qui scrivi il nome del modello che vuoi usare
     temperature=0.3,
     max_tokens=8192, 
     max_retries=5,
