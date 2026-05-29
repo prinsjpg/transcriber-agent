@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pypdf import PdfReader
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
+from bs4 import BeautifulSoup
 
 load_dotenv()
 
@@ -69,6 +70,44 @@ def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_p
     print(f"[Info] Impostato overlap di sicurezza di {overlap_parole} parole tra i blocchi.")
     return blocchi
 
+def pulisci_meta_commenti(testo_html: str) -> str:
+    """
+    Usa le espressioni regolari (Regex) per trovare e cancellare le tipiche 
+    frasi introduttive generate dall'IA.
+    """
+    pattern_logorrea = r"(?i)(?:In questo|Questo|Proseguendo da dove)[^\.]*?(?:blocco|segmento|frammento|paragrafo)[^\.]*?(?:si concentra|analizzeremo|parleremo di|si focalizza|siamo interrotti)[^\.]*\.\s*"
+    testo_pulito = re.sub(pattern_logorrea, "", testo_html)
+    return testo_pulito
+
+def genera_indice(testo_html: str) -> str:
+    """
+    Analizza l'HTML, trova i titoli, assegna loro un ID univoco 
+    e inietta un indice cliccabile subito dopo il titolo principale.
+    """
+    soup = BeautifulSoup(testo_html, 'html.parser')
+    
+    indice_html = "<div class='indice'><h2>Indice dei Contenuti</h2><ul>"
+    titoli = soup.find_all(['h2', 'h3'])
+    
+    if not titoli:
+        return testo_html
+        
+    for i, tag in enumerate(titoli):
+        id_titolo = f"sezione-{i}"
+        tag['id'] = id_titolo
+        indice_html += f"<li><a href='#{id_titolo}'>{tag.text.strip()}</a></li>"
+        
+    indice_html += "</ul></div>"
+    
+    # Cerca il contenitore principale per inserire l'indice in modo elegante sotto l'H1
+    container = soup.find('div', class_='container')
+    if container and container.h1:
+        container.h1.insert_after(BeautifulSoup(indice_html, 'html.parser'))
+    elif soup.body:
+        soup.body.insert(0, BeautifulSoup(indice_html, 'html.parser'))
+        
+    return str(soup)
+
 # --- NUOVA FUNZIONE DI IMPAGINAZIONE HTML/PDF ---
 def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_perfetta.html"):
     def formatta_paragrafi(testo, classe_css=""):
@@ -85,7 +124,6 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
         html = ""
         for p in paragrafi:
             testo_p = p.strip()
-            # Ignoriamo le frasi di cortesia dell'IA se non ci sono aneddoti
             if testo_p and "non sono presenti digressioni" not in testo_p.lower():
                 html += f"""
                 <div class="anecdote-box">
@@ -105,6 +143,8 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
         <meta charset="UTF-8">
         <title>Dispensa Universitaria Autonoma</title>
 
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
         <script>
             MathJax = {{
                 tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }}
@@ -114,8 +154,24 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
         
         <style>
             @page {{ size: A4; margin: 20mm 18mm; }}
-            body {{ font-family: 'Segoe UI', Helvetica, Arial, sans-serif; color: #2d3748; line-height: 1.6; background-color: #ffffff; margin: 0; padding: 0; }}
-            .container {{ max-width: 800px; margin: auto; }}
+            body {{ 
+                max-width: 800px; 
+                margin: 40px auto; 
+                font-family: 'Inter', sans-serif;
+                line-height: 1.7; 
+                color: #2c3e50;
+                padding: 0 20px;
+            }}
+            .indice {{
+                background-color: #f8f9fa;
+                border-left: 4px solid #3498db;
+                padding: 20px;
+                margin-bottom: 40px;
+                border-radius: 4px;
+            }}
+            .indice a {{ text-decoration: none; color: #2980b9; }}
+            .indice a:hover {{ text-decoration: underline; }}
+            
             h1 {{ color: #1a365d; font-size: 22pt; border-bottom: 2px solid #2b6cb0; padding-bottom: 5px; margin-top: 40px; text-transform: uppercase; letter-spacing: 0.5px; }}
             h2 {{ color: #2b6cb0; font-size: 15pt; margin-top: 35px; margin-bottom: 15px; border-left: 5px solid #2b6cb0; padding-left: 10px; }}
             p {{ text-align: justify; text-justify: inter-word; margin-bottom: 14px; font-size: 11pt; }}
@@ -140,10 +196,16 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     </html>
     """
 
+    # --- APPLICAZIONE DEI FILTRI FINALI ---
+    # 1. Pulisce l'HTML generato dalle frasi robotiche
+    html_pulito = pulisci_meta_commenti(template_html)
+    
+    # 2. Genera e inietta l'indice di navigazione
+    html_finale = genera_indice(html_pulito)
+
     with open(nome_file, 'w', encoding='utf-8') as f:
-        f.write(template_html)
+        f.write(html_finale)
     print(f"\n[✓] Layout grafico generato con successo in: {nome_file}")
-# ----------------------------------------------
 
 def nodo_correzione(state: GraphState) -> dict:
     system_prompt = """Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
