@@ -81,7 +81,8 @@ def pulisci_meta_commenti(testo_html: str) -> str:
     Usa le espressioni regolari (Regex) per trovare e cancellare le tipiche 
     frasi introduttive generate dall'IA.
     """
-    pattern_logorrea = r"(?i)(?:In questo|Questo|Proseguendo da dove)[^\.]*?(?:blocco|segmento|frammento|paragrafo)[^\.]*?(?:si concentra|analizzeremo|parleremo di|si focalizza|siamo interrotti)[^\.]*\.\s*"
+    # Regex ampliata per intercettare anche le forme "Il frammento approfondisce..." o "Il blocco che segue..."
+    pattern_logorrea = r"(?i)(?:In questo|Questo|Il|Il presente|Proseguendo da dove)[^\.]*?(?:blocco|segmento|frammento|paragrafo)[^\.]*?(?:si concentra|approfondisce|analizza|analizzeremo|parleremo di|si focalizza|siamo interrotti|segue)[^\.]*\.\s*"
     testo_pulito = re.sub(pattern_logorrea, "", testo_html)
     return testo_pulito
 
@@ -128,9 +129,13 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     def formatta_aneddoti(testo):
         paragrafi = testo.strip().split('\n\n')
         html = ""
+        # Lista delle frasi tipiche di quando non ci sono aneddoti
+        frasi_vuote = ["non sono presenti digressioni", "non emergono nel frammento", "non sono presenti aneddoti", "nessun aneddoto"]
+        
         for p in paragrafi:
             testo_p = p.strip()
-            if testo_p and "non sono presenti digressioni" not in testo_p.lower():
+            # Inserisce il box SOLO se il testo non contiene nessuna delle frasi vuote
+            if testo_p and not any(frase in testo_p.lower() for frase in frasi_vuote):
                 html += f"""
                 <div class="anecdote-box">
                     <div class="anecdote-title">💡 Spunto di Riflessione / Digressione</div>
