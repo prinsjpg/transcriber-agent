@@ -174,14 +174,14 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
         <script>hljs.highlightAll();</script>
 
         <style>
-        pre code {
+        pre code {{
             border-radius: 8px;
             font-family: 'Courier New', Courier, monospace;
             font-size: 10.5pt;
             padding: 15px;
             margin-top: 15px;
             margin-bottom: 15px;
-            }
+        }}
         </style>
 
         <style>
