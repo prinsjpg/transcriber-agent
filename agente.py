@@ -237,7 +237,7 @@ def nodo_generazione(state: GraphState) -> dict:
     Estrai le informazioni da questo frammento e classificale usando ESATTAMENTE questi tre tag XML. Non usare titoli markdown, restituisci solo i tag compilati:
     
     <concetti>
-    (Scrivi un paragrafo discorsivo di 4 o 5 righe che faccia da introduzione narrativa ai temi trattati in questo blocco).
+    (Riassumi i temi chiave in 4 o 5 righe. REGOLA TASSATIVA: Scrivi in stile impersonale, come un libro di testo universitario. È SEVERAMENTE VIETATO usare parole come "blocco", "frammento", "lezione", "professore", "studente", o fare la telecronaca di cosa succede nel testo. Spiega direttamente la teoria senza mai annunciare cosa stai per spiegare).
     </concetti>
     
     <spiegazione>
