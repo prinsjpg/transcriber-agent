@@ -233,6 +233,7 @@ def nodo_generazione(state: GraphState) -> dict:
     4. DIVIETO DI LOOP E SINONIMI (ANTI-ALLUCINAZIONE): Non creare MAI liste infinite di termini, sinonimi o parole chiave ripetitive. Sii analitico, razionale e discorsivo.
     5. DIVIETO DI RIPETIZIONE (MEMORIA A STAFFETTA): Leggi attentamente il 'CONTESTO PRECEDENTE'. Se un concetto, un acronimo o una spiegazione è già presente lì, È SEVERAMENTE VIETATO rispiegarlo in questo blocco. Dai per scontato che il lettore lo sappia già e prosegui in avanti con il discorso.
     6. FORMULE MATEMATICHE: Se il professore spiega una formula matematica, un'equazione o un teorema, DEVI obbligatoriamente ricostruire la formula esatta e scriverla nel testo utilizzando la sintassi LaTeX. Usa $ per le formule in linea e $$ per le formule centrate su una nuova riga. Non limitarti a raccontarla a parole.
+    7. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana. È tassativamente vietato l'uso di caratteri cinesi, ideogrammi asiatici o parole in altre lingue. Le uniche eccezioni consentite sono i termini tecnici in inglese ormai consolidati.
 
     Estrai le informazioni da questo frammento e classificale usando ESATTAMENTE questi tre tag XML. Non usare titoli markdown, restituisci solo i tag compilati:
     
