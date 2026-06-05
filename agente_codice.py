@@ -8,7 +8,7 @@ from typing import TypedDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage, SystemMessage
-from pypdf import PdfReader
+from markitdown import MarkItDown
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from bs4 import BeautifulSoup
@@ -35,21 +35,28 @@ class GraphState(TypedDict):
 
 def estrai_materiale_didattico(cartella: str) -> list[Document]:
     """
-    Legge PDF e file di codice sorgente da una cartella per il RAG.
+    Legge PDF/PPTX tramite MarkItDown e allega i file di codice sorgente per il RAG.
     """
     documenti = []
+    md = MarkItDown()
     
-    # 1. Estrazione dai PDF (come prima)
-    file_pdf = glob.glob(f"{cartella}/*.pdf")
-    for percorso in file_pdf:
+    # 1. Estrazione da Slide e Documenti (NUOVO MOTORE)
+    estensioni_doc = ['*.pdf', '*.pptx', '*.docx']
+    file_doc = []
+    for est in estensioni_doc:
+        file_doc.extend(glob.glob(f"{cartella}/{est}"))
+        
+    for percorso in file_doc:
         nome_file = os.path.basename(percorso)
-        reader = PdfReader(percorso)
-        for numero_pagina, pagina in enumerate(reader.pages):
-            testo = pagina.extract_text()
-            if testo:
-                documenti.append(Document(page_content=f"--- Fonte: {nome_file} (Pag {numero_pagina+1}) ---\n{testo}"))
+        print(f"    - Conversione slide in Markdown: {nome_file}...")
+        try:
+            risultato = md.convert(percorso)
+            if risultato.text_content:
+                documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{risultato.text_content}"))
+        except Exception as e:
+            print(f"    [!] Errore conversione {nome_file}: {e}")
                 
-    # 2. Estrazione dai file di Codice (NUOVO)
+    # 2. Estrazione dai file di Codice Sorgente (Migliorata)
     estensioni_codice = ['*.py', '*.js', '*.html', '*.java', '*.cpp', '*.c', '*.txt', '*.md']
     file_codice = []
     for est in estensioni_codice:
@@ -57,10 +64,12 @@ def estrai_materiale_didattico(cartella: str) -> list[Document]:
         
     for percorso in file_codice:
         nome_file = os.path.basename(percorso)
-        with open(percorso, 'r', encoding='utf-8', errors='ignore') as f:
-            contenuto = f.read()
-            # Inseriamo l'intero file di codice nel motore di ricerca
-            documenti.append(Document(page_content=f"--- SORGENTE CODICE: {nome_file} ---\n{contenuto}"))
+        try:
+            with open(percorso, 'r', encoding='utf-8', errors='ignore') as f:
+                contenuto = f.read()
+                documenti.append(Document(page_content=f"--- SORGENTE CODICE: {nome_file} ---\n{contenuto}"))
+        except Exception:
+            pass
             
     return documenti
 
@@ -305,15 +314,18 @@ def costruisci_grafo():
 
 def estrai_testo_da_cartella_txt(cartella: str) -> str:
     """
-    Legge tutti i file .txt all'interno di una cartella, li ordina alfabeticamente 
-    (es. parte1.txt, parte2.txt) e li unisce in un unico grande testo.
+    Legge tutti i file .txt e .md all'interno di una cartella, li ordina alfabeticamente 
+    e li unisce in un unico grande testo.
     """
-    # Cerca tutti i file .txt e li mette in ordine alfabetico
-    file_trovati = sorted(glob.glob(f"{cartella}/*.txt"))
+    # Cerca sia i file .txt che i file .md
+    file_txt = glob.glob(f"{cartella}/*.txt")
+    file_md = glob.glob(f"{cartella}/*.md")
+    
+    file_trovati = sorted(file_txt + file_md)
     testo_totale = ""
     
     if not file_trovati:
-        print(f"[!] Nessun file TXT trovato nella cartella '{cartella}'.")
+        print(f"[!] Nessun file TXT o MD trovato nella cartella '{cartella}'.")
         return ""
         
     for percorso_file in file_trovati:
@@ -321,7 +333,6 @@ def estrai_testo_da_cartella_txt(cartella: str) -> str:
         print(f"    - Aggiungo trascrizione: {nome_file}")
         
         with open(percorso_file, 'r', encoding='utf-8') as file:
-            # Aggiunge il testo e un paio di a capo per separare nettamente le parti
             testo_totale += f"\n\n--- INIZIO {nome_file} ---\n\n"
             testo_totale += file.read() + "\n\n"
             

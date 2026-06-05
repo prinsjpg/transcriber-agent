@@ -3,5 +3,5 @@ langchain-openai
 langgraph
 langchain-core
 langchain-community
-pypdf
+markitdown
 rank_bm25

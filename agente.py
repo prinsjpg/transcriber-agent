@@ -7,7 +7,7 @@ from typing import TypedDict
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage, SystemMessage
-from pypdf import PdfReader
+from markitdown import MarkItDown
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from bs4 import BeautifulSoup
@@ -34,28 +34,34 @@ class GraphState(TypedDict):
 
 def estrai_documenti_da_cartella_pdf(cartella: str) -> list[Document]:
     """
-    Legge TUTTI i file PDF all'interno di una cartella e li trasforma 
-    in documenti per il RAG, etichettando ogni pagina col nome del file originale.
+    Usa MarkItDown per convertire PDF, Slide PowerPoint e file Word in puro Markdown.
     """
     documenti = []
-    # Cerca tutti i file .pdf nella cartella specificata
-    file_trovati = glob.glob(f"{cartella}/*.pdf")
+    md = MarkItDown()
+    
+    # Estende la ricerca a molteplici formati documentali
+    estensioni = ['*.pdf', '*.pptx', '*.docx', '*.xlsx']
+    file_trovati = []
+    for est in estensioni:
+        file_trovati.extend(glob.glob(f"{cartella}/{est}"))
     
     if not file_trovati:
-        print(f"[!] Nessun file PDF trovato nella cartella '{cartella}'.")
+        print(f"[!] Nessun file di supporto trovato nella cartella '{cartella}'.")
         return []
         
     for percorso_file in file_trovati:
         nome_file = os.path.basename(percorso_file)
-        reader = PdfReader(percorso_file)
-        
-        for numero_pagina, pagina in enumerate(reader.pages):
-            testo_pagina = pagina.extract_text()
-            if testo_pagina and testo_pagina.strip():
-                # Il RAG ora saprà esattamente da quale pacco di slide arriva la pagina!
-                contenuto = f"--- Fonte: {nome_file} - Pagina {numero_pagina + 1} ---\n{testo_pagina}"
+        print(f"    - Elaborazione e conversione file RAG: {nome_file}...")
+        try:
+            risultato = md.convert(percorso_file)
+            testo_formattato = risultato.text_content
+            
+            if testo_formattato:
+                contenuto = f"--- FONTE: {nome_file} ---\n{testo_formattato}"
                 documenti.append(Document(page_content=contenuto))
-                
+        except Exception as e:
+            print(f"    [!] Errore nella conversione di {nome_file}: {e}")
+            
     return documenti
 
 def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_parole: int = 150) -> list[str]:
@@ -274,10 +280,10 @@ def costruisci_grafo():
 
 def estrai_testo_da_cartella_txt(cartella: str) -> str:
     """
-    Legge tutti i file .txt e .mdall'interno di una cartella, li ordina alfabeticamente 
-    (es. parte1.txt, parte2.txt) e li unisce in un unico grande testo.
+    Legge tutti i file .txt e .md all'interno di una cartella, li ordina alfabeticamente 
+    e li unisce in un unico grande testo.
     """
-    # Cerca sia i .txt che i .md e li unisce
+    # Cerca sia i file .txt che i file .md
     file_txt = glob.glob(f"{cartella}/*.txt")
     file_md = glob.glob(f"{cartella}/*.md")
     
@@ -293,7 +299,6 @@ def estrai_testo_da_cartella_txt(cartella: str) -> str:
         print(f"    - Aggiungo trascrizione: {nome_file}")
         
         with open(percorso_file, 'r', encoding='utf-8') as file:
-            # Aggiunge il testo e un paio di a capo per separare nettamente le parti
             testo_totale += f"\n\n--- INIZIO {nome_file} ---\n\n"
             testo_totale += file.read() + "\n\n"
             
