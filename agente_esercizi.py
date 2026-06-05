@@ -291,10 +291,10 @@ def nodo_generazione(state: GraphState) -> dict:
     
     REGOLE STILISTICHE TASSATIVE: 
     1. DIVIETO DI SINTESI E META-COMMENTI: Espandi il testo in modo discorsivo. È tassativamente vietato usare frasi come "In questo frammento", "Il professore spiega", "Passiamo a". Spiega direttamente i concetti.
-    2. TRADUZIONE DEI RIFERIMENTI VISIVI: Se il professore dice "come vediamo qui", "questo albero", "questa freccia nell'immagine", È VIETATO riportare queste frasi testualmente. Devi guardare il testo delle slide fornite, dedurre a cosa si riferisce e spiegarlo a parole (es. "Come si evince dall'albero di derivazione in cui il nodo radice S produce...").
+    2. TRADUZIONE DEI RIFERIMENTI VISIVI E CROMATICI: Il professore farà spesso riferimento a colori (es. "il nodo rosso", "la freccia blu") o a posizioni ("qui in alto", "questo albero"). TU NON PUOI VEDERE I COLORI NE' LE IMMAGINI. Devi usare la logica: incrocia la spiegazione del professore con il contenuto testuale delle slide (automi, grammatiche) per dedurre a quale elemento tecnico si riferisce. Sostituisci sempre il riferimento al colore con il nome tecnico corretto. (Sbagliato: "Seguendo la freccia rossa...", Corretto: "Seguendo la transizione dal nodo q1 al nodo q0...").
     3. GRAMMATICHE E CODICE: Usa sempre i blocchi di codice Markdown (```) per scrivere le produzioni grammaticali (BNF), il codice sorgente, o per disegnare semplici alberi sintattici in formato testuale.
-    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana, evitando ideogrammi asiatici.
-    5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili e classi tra i backtick (es. `TokenScanner`).
+    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana. È tassativamente vietato l'uso di caratteri cinesi, ideogrammi asiatici o parole in altre lingue.
+    5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili, nodi e classi tra i backtick (es. `TokenScanner`, `q0`).
     
     Estrai le informazioni e classificale usando ESATTAMENTE questi quattro tag XML:
     
