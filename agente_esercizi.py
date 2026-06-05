@@ -366,14 +366,14 @@ def estrai_testo_da_cartella_txt(cartella: str) -> str:
 if __name__ == "__main__":
     app = costruisci_grafo()
     
-    cartella_slide = "slide_codice_info"  # <--- NUOVA CARTELLA
-    cartella_trascrizioni = "testi_info" # <--- NUOVA CARTELLA PER I TESTI
-    nome_output = "dispensa_codice_perfetta.html"
+    cartella_slide = "slide_compilatori" 
+    cartella_trascrizioni = "testi_compilatori"
+    nome_output = "dispensa_compilatori.html"
     
     print(f"\n[FUSIONE] Lettura e unione delle trascrizioni nella cartella '{cartella_trascrizioni}'...")
     trascrizione_completa = estrai_testo_da_cartella_txt(cartella_trascrizioni)
 
-    print(f"\n[RAG] Lettura di tutti i PDF nella cartella '{cartella_slide}'...")
+    print(f"\n[RAG] Lettura di tutti i documenti nella cartella '{cartella_slide}'...")
     documenti_slide = estrai_materiale_didattico(cartella_slide)
     
     motore_ricerca = BM25Retriever.from_documents(documenti_slide)
@@ -464,6 +464,6 @@ if __name__ == "__main__":
     # ==========================================
     # FASE 4: ESPORTAZIONE IN HTML/PDF
     # ==========================================
-    salva_dispensa_html(sezione_1, sezione_2, sezione_3_pulita, "dispensa_codice_perfetta.html")
+    salva_dispensa_html(sezione_1, sezione_2, sezione_3_pulita, nome_output)
     
-    print("\n[SUCCESSO TOTALE] Pipeline completata. Apri 'dispensa_codice_perfetta.html' nel browser e premi Ctrl+P per stampare in PDF!")
+    print("\n[SUCCESSO TOTALE] Pipeline completata. Apri 'dispensa_compilatori.html' nel browser e premi Ctrl+P per stampare in PDF!")
