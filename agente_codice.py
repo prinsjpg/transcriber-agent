@@ -50,7 +50,7 @@ def estrai_materiale_didattico(cartella: str) -> list[Document]:
                 documenti.append(Document(page_content=f"--- Fonte: {nome_file} (Pag {numero_pagina+1}) ---\n{testo}"))
                 
     # 2. Estrazione dai file di Codice (NUOVO)
-    estensioni_codice = ['*.py', '*.js', '*.html', '*.java', '*.cpp', '*.c', '*.txt']
+    estensioni_codice = ['*.py', '*.js', '*.html', '*.java', '*.cpp', '*.c', '*.txt', '*.md']
     file_codice = []
     for est in estensioni_codice:
         file_codice.extend(glob.glob(f"{cartella}/{est}"))

@@ -274,15 +274,18 @@ def costruisci_grafo():
 
 def estrai_testo_da_cartella_txt(cartella: str) -> str:
     """
-    Legge tutti i file .txt all'interno di una cartella, li ordina alfabeticamente 
+    Legge tutti i file .txt e .mdall'interno di una cartella, li ordina alfabeticamente 
     (es. parte1.txt, parte2.txt) e li unisce in un unico grande testo.
     """
-    # Cerca tutti i file .txt e li mette in ordine alfabetico
-    file_trovati = sorted(glob.glob(f"{cartella}/*.txt"))
+    # Cerca sia i .txt che i .md e li unisce
+    file_txt = glob.glob(f"{cartella}/*.txt")
+    file_md = glob.glob(f"{cartella}/*.md")
+    
+    file_trovati = sorted(file_txt + file_md)
     testo_totale = ""
     
     if not file_trovati:
-        print(f"[!] Nessun file TXT trovato nella cartella '{cartella}'.")
+        print(f"[!] Nessun file TXT o MD trovato nella cartella '{cartella}'.")
         return ""
         
     for percorso_file in file_trovati:
