@@ -17,9 +17,9 @@ load_dotenv()
 
 # Configurazione universale tramite OpenRouter
 llm = ChatOpenAI(
-    base_url="https://api.xiaomimimo.com/v1",
-    api_key=os.environ.get("MIMO_API_KEY"),  # Usa la chiave specifica per il modello scelto
-    model="mimo-v2.5",  # Qui scrivi il nome del modello che vuoi usare
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY"),  # Usa la chiave specifica per il modello scelto
+    model="nvidia/nemotron-3-super-120b-a12b:free",  # Qui scrivi il nome del modello che vuoi usare
     temperature=0.3,
     max_tokens=8192, 
     max_retries=5,
@@ -376,6 +376,11 @@ if __name__ == "__main__":
     print(f"\n[RAG] Lettura di tutti i documenti nella cartella '{cartella_slide}'...")
     documenti_slide = estrai_materiale_didattico(cartella_slide)
     
+    if not documenti_slide:
+        print("[!] ERRORE GRAVE: Nessun documento valido trovato. Impossibile creare il motore di ricerca.")
+        print("Assicurati di aver inserito le slide e di aver installato 'markitdown[all]'. Uscita in corso...")
+        exit()
+
     motore_ricerca = BM25Retriever.from_documents(documenti_slide)
     motore_ricerca.k = 3 
     
