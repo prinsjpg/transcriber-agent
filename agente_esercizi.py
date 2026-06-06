@@ -18,8 +18,8 @@ load_dotenv()
 # Configurazione universale tramite OpenRouter
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY"),  # Usa la chiave specifica per il modello scelto
-    model="nvidia/nemotron-3-super-120b-a12b:free",  # Qui scrivi il nome del modello che vuoi usare
+    api_key=os.environ.get("OPENROUTER_API_KEY_OWL_ALPHA"),  # Usa la chiave specifica per il modello scelto
+    model="openrouter/owl-alpha",  # Qui scrivi il nome del modello che vuoi usare
     temperature=0.3,
     max_tokens=8192, 
     max_retries=5,
@@ -417,7 +417,14 @@ if __name__ == "__main__":
                 
                 if m1 and m1.group(1).strip(): sezione_1 += m1.group(1).strip() + "\n\n"
                 if m2 and m2.group(1).strip(): sezione_2 += m2.group(1).strip() + "\n\n"
-                if m_ex and m_ex.group(1).strip(): sezione_2 += "\n\n<box_esercizio>\n" + m_ex.group(1).strip() + "\n</box_esercizio>\n\n"
+                # --- FILTRO ANTI-BOX VUOTI PER GLI ESERCIZI ---
+                testo_ex = m_ex.group(1).strip() if m_ex else ""
+                # Lista delle frasi che il modello usa per dire che non ci sono esercizi
+                frasi_vuote_ex = ["non presente", "nessun esercizio", "non viene risolto", "non ci sono esercizi", "nessun frammento"]
+                
+                # Aggiungiamo il box solo se c'è testo VERO e non contiene le scuse
+                if testo_ex and not any(frase in testo_ex.lower() for frase in frasi_vuote_ex):
+                    sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + "\n</box_esercizio>\n\n"
                 if m3 and m3.group(1).strip(): sezione_3 += m3.group(1).strip() + "\n\n"
                 if m2 and m2.group(1).strip(): 
                     testo_spiegazione = m2.group(1).strip()
