@@ -18,8 +18,8 @@ load_dotenv()
 # Configurazione universale tramite OpenRouter
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY_OWL_ALPHA"),  # Usa la chiave specifica per il modello scelto
-    model="openrouter/owl-alpha",  # Qui scrivi il nome del modello che vuoi usare
+    api_key=os.environ.get("OPENROUTER_API_KEY_GOOGLE_GEMMA_4_31B"),  # Usa la chiave specifica per il modello scelto
+    model="google/gemma-4-31b-it:free",  # Qui scrivi il nome del modello che vuoi usare
     temperature=0.3,
     max_tokens=8192, 
     max_retries=5,
@@ -145,7 +145,7 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
         paragrafi = testo.strip().split('\n\n')
         html = ""
         # Lista delle frasi tipiche di quando non ci sono aneddoti
-        frasi_vuote = ["non sono presenti digressioni", "non emergono nel frammento", "non sono presenti aneddoti", "nessun aneddoto"]
+        frasi_vuote = ["non sono presenti digressioni", "non emergono nel frammento", "non sono presenti aneddoti", "nessun aneddoto", "nessuna digressione"]
         
         for p in paragrafi:
             testo_p = p.strip()
@@ -281,7 +281,7 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     print(f"\n[✓] Layout grafico generato con successo in: {nome_file}")
 
 def nodo_correzione(state: GraphState) -> dict:
-    system_prompt = """Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
+    system_prompt = r"""Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
     Usa il testo delle slide fornito per capire e correggere i termini tecnici storpiati.
     REGOLE: Correggi la punteggiatura ma NON tagliare assolutamente nulla, NON riassumere per nessun motivo e mantieni il 100% del parlato originale."""
     
@@ -291,7 +291,7 @@ def nodo_correzione(state: GraphState) -> dict:
     return {"trascrizione_pulita": risposta.content}
 
 def nodo_generazione(state: GraphState) -> dict:
-    system_prompt = """Sei un Tutor Universitario e uno Scrittore Tecnico iper-dettagliato. 
+    system_prompt = r"""Sei un Tutor Universitario e uno Scrittore Tecnico iper-dettagliato. 
     Stai analizzando un SINGOLO frammento di una lezione molto più ampia.
     
     REGOLE STILISTICHE TASSATIVE: 
@@ -302,7 +302,10 @@ def nodo_generazione(state: GraphState) -> dict:
     4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana.
     5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili e classi tra i backtick (es. `TokenScanner`).
     6. FORMULE E GRAMMATICHE: Usa TASSATIVAMENTE la sintassi LaTeX per la matematica. Inserisci SEMPRE uno spazio tra il simbolo del dollaro e la formula (es. $ L(G) $). Usa il doppio dollaro per i blocchi isolati (es. $$S \rightarrow aSb$$). NON usare l'asterisco per le moltiplicazioni, usa \cdot.
-    7. TABELLE E A CAPO: Il Markdown non supporta l'invio a capo nelle celle delle tabelle. Se devi scrivere un elenco numerato o una procedura a gradini all'interno di una tabella, separa i vari punti usando TASSATIVAMENTE il tag HTML `<br>` (es. `1. Passo uno <br> 2. Passo due <br> 3. Passo tre`).
+    7. TABELLE E A CAPO: Il Markdown non supporta l'invio a capo nelle celle delle tabelle. Se devi scrivere un elenco numerato o una procedura a gradini all'interno di una tabella, separa i vari punti usando TASSATIVAMENTE il tag HTML `<br>`.
+    8. FORMATO DI OUTPUT (CRITICO): È severamente vietato inserire frasi introduttive, convenevoli (es. "Ecco la rielaborazione") o conclusioni. Non usare MAI i titoli in Markdown (###) per dividere le sezioni. Devi produrre SOLO puro codice XML.
+    
+    Estrai le informazioni e classificale usando ESATTAMENTE E SOLTANTO questi quattro tag XML (senza nient'altro fuori):
     
     Estrai le informazioni e classificale usando ESATTAMENTE questi quattro tag XML:
     
@@ -331,6 +334,23 @@ def nodo_generazione(state: GraphState) -> dict:
     
     --- BLOCCO TRASCRIZIONE PULITA DA ELABORARE ORA ---
     {state['trascrizione_pulita']}
+    
+    REGOLA CRITICA FINALE (PENA IL FALLIMENTO DEL SISTEMA):
+    La tua risposta DEVE INIZIARE ESATTAMENTE con il tag `<concetti>`. Non scrivere MAI frasi come "Ecco la rielaborazione" o "Ecco il testo". Non usare titoli Markdown (###).
+    Copia e compila ESATTAMENTE questo schema XML:
+    
+    <concetti>
+    ...
+    </concetti>
+    <spiegazione>
+    ...
+    </spiegazione>
+    <esercizio>
+    ...
+    </esercizio>
+    <digressioni>
+    ...
+    </digressioni>
     """
     
     risposta = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
@@ -424,10 +444,12 @@ if __name__ == "__main__":
                 m_ex = re.search(r"<esercizio>(.*?)</esercizio>", tg, re.DOTALL | re.IGNORECASE)
                 m3 = re.search(r"<digressioni>(.*?)</digressioni>", tg, re.DOTALL | re.IGNORECASE)
 
-                # --- MIGLIORIA 3: CONTROLLO DI SICUREZZA API ---
+                # --- MIGLIORIA 3: CONTROLLO DI SICUREZZA API (BLINDATO) ---
                 if not m1 and not m2:
-                    print(f"    [ATTENZIONE] L'API gratuita ha restituito un blocco senza tag XML validi o incompleto!")
-                    print(f"    Ti consiglio di controllare manualmente il testo generato o riavviare lo script.")
+                    # Stampiamo i primi 500 caratteri della risposta per capire l'errore!
+                    print(f"\n    [DEBUG] Il modello ha risposto questo invece dei tag XML:\n    >>> {tg[:500]}...\n")
+                    # Invece di proseguire, lanciamo un errore per forzare il riavvio del blocco!
+                    raise ValueError("Il modello ha fallito la formattazione XML o ha restituito un errore.")
 
                 # --- SALVATAGGIO CON MIGLIORIA 1: SEPARATORI VISIVI ---
                 if m1 and m1.group(1).strip(): 
