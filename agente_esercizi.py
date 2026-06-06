@@ -18,8 +18,8 @@ load_dotenv()
 # Configurazione universale tramite OpenRouter
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY_GOOGLE_GEMMA_4_31B"),  # Usa la chiave specifica per il modello scelto
-    model="google/gemma-4-31b-it:free",  # Qui scrivi il nome del modello che vuoi usare
+    api_key=os.environ.get("OPENROUTER_API_KEY_POOLSIDE_LAGUNA_M1"),  # Usa la chiave specifica per il modello scelto
+    model="poolside/laguna-m.1:free",  # Qui scrivi il nome del modello che vuoi usare
     temperature=0.3,
     max_tokens=8192, 
     max_retries=5,
