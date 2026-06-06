@@ -290,11 +290,13 @@ def nodo_generazione(state: GraphState) -> dict:
     Stai analizzando un SINGOLO frammento di una lezione molto più ampia.
     
     REGOLE STILISTICHE TASSATIVE: 
-    1. DIVIETO DI SINTESI E META-COMMENTI: Espandi il testo in modo discorsivo. È tassativamente vietato usare frasi come "In questo frammento", "Il professore spiega", "Passiamo a". Spiega direttamente i concetti.
-    2. TRADUZIONE DEI RIFERIMENTI VISIVI E CROMATICI: Il professore farà spesso riferimento a colori (es. "il nodo rosso", "la freccia blu") o a posizioni ("qui in alto", "questo albero"). TU NON PUOI VEDERE I COLORI NE' LE IMMAGINI. Devi usare la logica: incrocia la spiegazione del professore con il contenuto testuale delle slide (automi, grammatiche) per dedurre a quale elemento tecnico si riferisce. Sostituisci sempre il riferimento al colore con il nome tecnico corretto. (Sbagliato: "Seguendo la freccia rossa...", Corretto: "Seguendo la transizione dal nodo q1 al nodo q0...").
-    3. GRAMMATICHE E CODICE: Usa sempre i blocchi di codice Markdown (```) per scrivere le produzioni grammaticali (BNF), il codice sorgente, o per disegnare semplici alberi sintattici in formato testuale.
-    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana. È tassativamente vietato l'uso di caratteri cinesi, ideogrammi asiatici o parole in altre lingue.
-    5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili, nodi e classi tra i backtick (es. `TokenScanner`, `q0`).
+    1. DIVIETO DI TELECRONACA E META-COMMENTI: È severamente vietato descrivere il testo o fare la cronaca della lezione. 
+    BLACKLIST: Non usare MAI le parole "frammento", "documento", "professore", "slide", "testo", "esamina", "tratta di". (Sbagliato: "Il professore spiega...", Corretto: "L'albero sintattico è...").
+    2. TRADUZIONE DEI RIFERIMENTI VISIVI E CROMATICI: Se il professore fa riferimento a colori o posizioni, TU NON PUOI VEDERLI. Usa la logica: incrocia la spiegazione con il testo delle slide per dedurre a quale elemento si riferisce. Sostituisci il colore con il nome tecnico corretto.
+    3. ESERCIZI GUIDATI E CODICE: Usa sempre i blocchi di codice Markdown (```) per scrivere codice sorgente o per disegnare alberi sintattici testuali.
+    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana, evitando ideogrammi o caratteri asiatici.
+    5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili e classi tra i backtick (es. `TokenScanner`).
+    6. FORMULE E GRAMMATICHE (IMPORTANTE): Usa TASSATIVAMENTE la sintassi LaTeX per tutte le espressioni matematiche, le produzioni grammaticali, le transizioni di stato e i simboli degli automi. Usa il simbolo singolo `$` per le formule in linea (es. $L(G)$) e il doppio `$$` per le formule in blocco isolate.
     
     Estrai le informazioni e classificale usando ESATTAMENTE questi quattro tag XML:
     
@@ -410,25 +412,35 @@ if __name__ == "__main__":
                 risultato = app.invoke(input_stato)
                 tg = risultato["documento_finale"]
                 
+                # --- ESTRAZIONE TAG ---
                 m1 = re.search(r"<concetti>(.*?)</concetti>", tg, re.DOTALL | re.IGNORECASE)
                 m2 = re.search(r"<spiegazione>(.*?)</spiegazione>", tg, re.DOTALL | re.IGNORECASE)
                 m_ex = re.search(r"<esercizio>(.*?)</esercizio>", tg, re.DOTALL | re.IGNORECASE)
                 m3 = re.search(r"<digressioni>(.*?)</digressioni>", tg, re.DOTALL | re.IGNORECASE)
-                
-                if m1 and m1.group(1).strip(): sezione_1 += m1.group(1).strip() + "\n\n"
-                if m2 and m2.group(1).strip(): sezione_2 += m2.group(1).strip() + "\n\n"
+
+                # --- MIGLIORIA 3: CONTROLLO DI SICUREZZA API ---
+                if not m1 and not m2:
+                    print(f"    [ATTENZIONE] L'API gratuita ha restituito un blocco senza tag XML validi o incompleto!")
+                    print(f"    Ti consiglio di controllare manualmente il testo generato o riavviare lo script.")
+
+                # --- SALVATAGGIO CON MIGLIORIA 1: SEPARATORI VISIVI ---
+                if m1 and m1.group(1).strip(): 
+                    sezione_1 += m1.group(1).strip() + "\n\n"
+                    
+                if m2 and m2.group(1).strip(): 
+                    # Aggiungiamo un divisore orizzontale (---) SOLO se c'è già teoria precedente
+                    separatore = "\n\n---\n\n" if len(sezione_2) > 0 else ""
+                    sezione_2 += separatore + m2.group(1).strip() + "\n\n"
+
                 # --- FILTRO ANTI-BOX VUOTI PER GLI ESERCIZI ---
                 testo_ex = m_ex.group(1).strip() if m_ex else ""
-                # Lista delle frasi che il modello usa per dire che non ci sono esercizi
                 frasi_vuote_ex = ["non presente", "nessun esercizio", "non viene risolto", "non ci sono esercizi", "nessun frammento"]
                 
-                # Aggiungiamo il box solo se c'è testo VERO e non contiene le scuse
                 if testo_ex and not any(frase in testo_ex.lower() for frase in frasi_vuote_ex):
                     sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + "\n</box_esercizio>\n\n"
-                if m3 and m3.group(1).strip(): sezione_3 += m3.group(1).strip() + "\n\n"
-                if m2 and m2.group(1).strip(): 
-                    testo_spiegazione = m2.group(1).strip()
-                    memoria_storica = testo_spiegazione[-4000:]
+                    
+                if m3 and m3.group(1).strip(): 
+                    sezione_3 += m3.group(1).strip() + "\n\n"
                 
                 print(f"[✓] Blocco {indice} completato con successo!")
                 successo = True 
