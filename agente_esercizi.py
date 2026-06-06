@@ -297,11 +297,12 @@ def nodo_generazione(state: GraphState) -> dict:
     REGOLE STILISTICHE TASSATIVE: 
     1. DIVIETO DI TELECRONACA E META-COMMENTI: È severamente vietato descrivere il testo o fare la cronaca della lezione. 
     BLACKLIST: Non usare MAI le parole "frammento", "documento", "professore", "slide", "testo", "esamina", "tratta di". (Sbagliato: "Il professore spiega...", Corretto: "L'albero sintattico è...").
-    2. TRADUZIONE DEI RIFERIMENTI VISIVI E CROMATICI: Se il professore fa riferimento a colori o posizioni, TU NON PUOI VEDERLI. Usa la logica: incrocia la spiegazione con il testo delle slide per dedurre a quale elemento si riferisce. Sostituisci il colore con il nome tecnico corretto.
-    3. ESERCIZI GUIDATI E CODICE: Usa sempre i blocchi di codice Markdown (```) per scrivere codice sorgente o per disegnare alberi sintattici testuali.
-    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana, evitando ideogrammi o caratteri asiatici.
+    2. TRADUZIONE DEI RIFERIMENTI VISIVI E CROMATICI: Se il professore fa riferimento a colori o posizioni, usa la logica per dedurre l'elemento tecnico. Sostituisci il colore con il nome tecnico corretto.
+    3. ESERCIZI E CODICE SORGENTE (IMPORTANTE): Quando risolvi un esercizio, DEVI ricopiare testualmente le esatte porzioni di codice, gli algoritmi o le grammatiche a cui si fa riferimento nelle slide. Usa sempre i blocchi di codice Markdown (```) per renderli visibili.
+    4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana.
     5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili e classi tra i backtick (es. `TokenScanner`).
-    6. FORMULE E GRAMMATICHE (IMPORTANTE): Usa TASSATIVAMENTE la sintassi LaTeX per la matematica. Per evitare conflitti con la formattazione testuale, inserisci SEMPRE uno spazio tra il simbolo del dollaro e la formula (es. $ L(G) $). Usa il doppio dollaro per i blocchi isolati (es. $$ S \rightarrow aSb $$). NON usare l'asterisco per le moltiplicazioni, usa \cdot.
+    6. FORMULE E GRAMMATICHE: Usa TASSATIVAMENTE la sintassi LaTeX per la matematica. Inserisci SEMPRE uno spazio tra il simbolo del dollaro e la formula (es. $ L(G) $). Usa il doppio dollaro per i blocchi isolati (es. $$S \rightarrow aSb$$). NON usare l'asterisco per le moltiplicazioni, usa \cdot.
+    7. TABELLE E A CAPO: Il Markdown non supporta l'invio a capo nelle celle delle tabelle. Se devi scrivere un elenco numerato o una procedura a gradini all'interno di una tabella, separa i vari punti usando TASSATIVAMENTE il tag HTML `<br>` (es. `1. Passo uno <br> 2. Passo due <br> 3. Passo tre`).
     
     Estrai le informazioni e classificale usando ESATTAMENTE questi quattro tag XML:
     
