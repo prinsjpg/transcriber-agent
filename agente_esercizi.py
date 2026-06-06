@@ -164,7 +164,7 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     s2_con_esercizi = formatta_esercizi(s2)
     # Usiamo la libreria markdown per convertire magicamente i blocchi di codice (fenced_code) 
     # in tag <pre><code> perfetti per Highlight.js
-    html_teoria = markdown.markdown(s2_con_esercizi, extensions=['fenced_code'])
+    html_teoria = markdown.markdown(s2_con_esercizi, extensions=['fenced_code', 'tables'])
     
     html_aneddoti = formatta_aneddoti(s3)
 
@@ -216,6 +216,11 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
             border-bottom: 1px solid #bbf7d0;
             padding-bottom: 5px;
         }}
+        
+        table {{ border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 10.5pt; }}
+        th {{ background-color: #2b6cb0; color: white; padding: 10px; text-align: left; }}
+        td {{ border: 1px solid #e2e8f0; padding: 10px; }}
+        tr:nth-child(even) {{ background-color: #f8fafc; }}
         </style>
 
         <style>
@@ -296,7 +301,7 @@ def nodo_generazione(state: GraphState) -> dict:
     3. ESERCIZI GUIDATI E CODICE: Usa sempre i blocchi di codice Markdown (```) per scrivere codice sorgente o per disegnare alberi sintattici testuali.
     4. VINCOLO LINGUISTICO: Scrivi ESCLUSIVAMENTE in lingua Italiana, evitando ideogrammi o caratteri asiatici.
     5. PROTEZIONE NOMI TECNICI: Racchiudi i nomi di token, variabili e classi tra i backtick (es. `TokenScanner`).
-    6. FORMULE E GRAMMATICHE (IMPORTANTE): Usa TASSATIVAMENTE la sintassi LaTeX per tutte le espressioni matematiche, le produzioni grammaticali, le transizioni di stato e i simboli degli automi. Usa il simbolo singolo `$` per le formule in linea (es. $L(G)$) e il doppio `$$` per le formule in blocco isolate.
+    6. FORMULE E GRAMMATICHE (IMPORTANTE): Usa TASSATIVAMENTE la sintassi LaTeX per la matematica. Per evitare conflitti con la formattazione testuale, inserisci SEMPRE uno spazio tra il simbolo del dollaro e la formula (es. $ L(G) $). Usa il doppio dollaro per i blocchi isolati (es. $$ S \rightarrow aSb $$). NON usare l'asterisco per le moltiplicazioni, usa \cdot.
     
     Estrai le informazioni e classificale usando ESATTAMENTE questi quattro tag XML:
     
@@ -441,6 +446,9 @@ if __name__ == "__main__":
                     
                 if m3 and m3.group(1).strip(): 
                     sezione_3 += m3.group(1).strip() + "\n\n"
+
+                if m2 and m2.group(1).strip():
+                    memoria_storica = m2.group(1).strip()[-400:]
                 
                 print(f"[✓] Blocco {indice} completato con successo!")
                 successo = True 
