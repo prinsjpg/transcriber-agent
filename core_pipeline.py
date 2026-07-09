@@ -12,6 +12,7 @@ import re
 import time
 import glob
 import json
+import difflib
 import hashlib
 import argparse
 from dataclasses import dataclass
@@ -78,6 +79,7 @@ class PipelineConfig:
     max_parole: int = 1500
     overlap_parole: int = 150
     memoria_caratteri: int = 4000
+    soglia_antiripetizione: float = 0.85  # scarta un paragrafo di teoria se simile oltre questa soglia a uno già inserito (1.0 = disattiva)
     pausa_secondi: int = 15
     pausa_retry: int = 30       # attesa base del backoff esponenziale (primo fallimento)
     backoff_max: int = 240      # tetto massimo dell'attesa tra i retry
@@ -566,6 +568,7 @@ def run(config: PipelineConfig):
 
     blocchi_trascrizione = dividi_trascrizione_in_blocchi(trascrizione_completa, config.max_parole, config.overlap_parole)
     sezione_1, sezione_2, sezione_3 = "", "", ""
+    paragrafi_teoria: list[str] = []   # storico per la guardia anti-ripetizione
 
     memoria_storica = "Questo è il primo blocco, inizia l'introduzione."
 
@@ -614,11 +617,22 @@ def run(config: PipelineConfig):
                     sezione_1 += m1.group(1).strip() + "\n\n"
 
                 if m2 and m2.group(1).strip():
-                    if config.separatori_teoria:
-                        separatore = "\n\n---\n\n" if len(sezione_2) > 0 else ""
-                        sezione_2 += separatore + m2.group(1).strip() + "\n\n"
+                    testo_teoria = m2.group(1).strip()
+                    # Guardia anti-ripetizione: scarta il paragrafo se quasi-identico
+                    # a uno già inserito (capita che il modello "eco-i" la memoria).
+                    duplicato = any(
+                        difflib.SequenceMatcher(None, testo_teoria, precedente).ratio() >= config.soglia_antiripetizione
+                        for precedente in paragrafi_teoria
+                    )
+                    if duplicato:
+                        print("    [Anti-ripetizione] Paragrafo di teoria quasi-identico a uno precedente: scartato.")
                     else:
-                        sezione_2 += m2.group(1).strip() + "\n\n"
+                        paragrafi_teoria.append(testo_teoria)
+                        if config.separatori_teoria:
+                            separatore = "\n\n---\n\n" if len(sezione_2) > 0 else ""
+                            sezione_2 += separatore + testo_teoria + "\n\n"
+                        else:
+                            sezione_2 += testo_teoria + "\n\n"
 
                 if config.has_esercizio:
                     m_ex = re.search(r"<esercizio>(.*?)</esercizio>", tg, re.DOTALL | re.IGNORECASE)
