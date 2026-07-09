@@ -11,6 +11,8 @@ import os
 import re
 import time
 import glob
+import json
+import hashlib
 import argparse
 from dataclasses import dataclass
 from typing import TypedDict
@@ -64,6 +66,8 @@ class PipelineConfig:
     enable_exercise_css: bool = False     # includi lo stile dei box esercizio
     enable_table_css: bool = False        # includi lo stile delle tabelle
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
+    usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
+    cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
     # --- Parametri numerici ---
     max_parole: int = 1500
     overlap_parole: int = 150
@@ -78,10 +82,45 @@ class PipelineConfig:
 # ==========================================================================
 # INGESTION E PREPROCESSING
 # ==========================================================================
-def estrai_materiale_didattico(cartella: str, include_code: bool = False) -> list[Document]:
+def _percorso_cache(cache_dir: str, percorso_file: str) -> str:
+    """Nome univoco del file di cache, derivato dal percorso assoluto della slide."""
+    chiave = hashlib.md5(os.path.abspath(percorso_file).encode('utf-8')).hexdigest()
+    return os.path.join(cache_dir, f"{chiave}.json")
+
+
+def _leggi_cache(cache_dir: str, percorso_file: str):
+    """Restituisce il Markdown in cache se il file sorgente non è cambiato (mtime + size)."""
+    percorso_cache = _percorso_cache(cache_dir, percorso_file)
+    if not os.path.exists(percorso_cache):
+        return None
+    try:
+        stat = os.stat(percorso_file)
+        with open(percorso_cache, 'r', encoding='utf-8') as f:
+            dati = json.load(f)
+        if dati.get('mtime') == stat.st_mtime and dati.get('size') == stat.st_size:
+            return dati.get('text')
+    except Exception:
+        return None
+    return None
+
+
+def _scrivi_cache(cache_dir: str, percorso_file: str, testo: str):
+    """Salva su disco il Markdown estratto insieme a mtime + size del sorgente."""
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        stat = os.stat(percorso_file)
+        with open(_percorso_cache(cache_dir, percorso_file), 'w', encoding='utf-8') as f:
+            json.dump({'mtime': stat.st_mtime, 'size': stat.st_size, 'text': testo}, f)
+    except Exception:
+        pass
+
+
+def estrai_materiale_didattico(cartella: str, include_code: bool = False,
+                               usa_cache: bool = True, cache_dir: str = ".cache/markitdown") -> list[Document]:
     """
     Converte slide PDF/PPTX/DOCX/XLSX in Markdown tramite MarkItDown e,
-    opzionalmente, allega i file di codice sorgente per il RAG.
+    opzionalmente, allega i file di codice sorgente per il RAG. Le conversioni
+    vengono memorizzate su disco e riusate se il file sorgente non è cambiato.
     """
     documenti = []
     md = MarkItDown()
@@ -96,10 +135,19 @@ def estrai_materiale_didattico(cartella: str, include_code: bool = False) -> lis
 
     for percorso in file_doc:
         nome_file = os.path.basename(percorso)
+
+        testo_cache = _leggi_cache(cache_dir, percorso) if usa_cache else None
+        if testo_cache is not None:
+            print(f"    - Slide da cache: {nome_file}")
+            documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{testo_cache}"))
+            continue
+
         print(f"    - Conversione slide in Markdown: {nome_file}...")
         try:
             risultato = md.convert(percorso)
             if risultato.text_content:
+                if usa_cache:
+                    _scrivi_cache(cache_dir, percorso, risultato.text_content)
                 documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{risultato.text_content}"))
         except Exception as e:
             print(f"    [!] Errore conversione {nome_file}: {e}")
@@ -441,7 +489,12 @@ def run(config: PipelineConfig):
     trascrizione_completa = estrai_testo_da_cartella_txt(config.cartella_trascrizioni)
 
     print(f"\n[RAG] Lettura di tutti i documenti nella cartella '{config.cartella_slide}'...")
-    documenti_slide = estrai_materiale_didattico(config.cartella_slide, include_code=config.include_code_files)
+    documenti_slide = estrai_materiale_didattico(
+        config.cartella_slide,
+        include_code=config.include_code_files,
+        usa_cache=config.usa_cache,
+        cache_dir=config.cache_dir,
+    )
 
     if not documenti_slide:
         print("[!] ERRORE GRAVE: Nessun documento valido trovato. Impossibile creare il motore di ricerca.")

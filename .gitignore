@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 
+# Cache locale delle conversioni PDF->Markdown (file generati)
+.cache/
+
 # (Opzionale) Nasconde i tuoi file personali di test
 slide.pdf
 trascrizione.txt
