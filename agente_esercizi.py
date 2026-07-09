@@ -77,10 +77,16 @@ def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_p
     parole = testo.split()
     blocchi = []
     passo = max_parole - overlap_parole
-    for i in range(0, len(parole), passo):
+    i = 0
+    while i < len(parole):
         blocco = " ".join(parole[i : i + max_parole])
         blocchi.append(blocco)
-        
+        # Se questo blocco arriva già alla fine del testo, fermati qui:
+        # evita di generare un blocco finale orfano composto solo dall'overlap.
+        if i + max_parole >= len(parole):
+            break
+        i += passo
+
     print(f"[Info] Trascrizione divisa in {len(blocchi)} blocchi.")
     print(f"[Info] Impostato overlap di sicurezza di {overlap_parole} parole tra i blocchi.")
     return blocchi
@@ -483,7 +489,7 @@ if __name__ == "__main__":
                     sezione_3 += m3.group(1).strip() + "\n\n"
 
                 if m2 and m2.group(1).strip():
-                    memoria_storica = m2.group(1).strip()[-400:]
+                    memoria_storica = m2.group(1).strip()[-4000:]
                 
                 print(f"[✓] Blocco {indice} completato con successo!")
                 successo = True 

@@ -68,10 +68,16 @@ def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_p
     parole = testo.split()
     blocchi = []
     passo = max_parole - overlap_parole
-    for i in range(0, len(parole), passo):
+    i = 0
+    while i < len(parole):
         blocco = " ".join(parole[i : i + max_parole])
         blocchi.append(blocco)
-        
+        # Se questo blocco arriva già alla fine del testo, fermati qui:
+        # evita di generare un blocco finale orfano composto solo dall'overlap.
+        if i + max_parole >= len(parole):
+            break
+        i += passo
+
     print(f"[Info] Trascrizione divisa in {len(blocchi)} blocchi.")
     print(f"[Info] Impostato overlap di sicurezza di {overlap_parole} parole tra i blocchi.")
     return blocchi
@@ -219,7 +225,7 @@ def salva_dispensa_html(s1: str, s2: str, s3: str, nome_file: str = "dispensa_pe
     print(f"\n[✓] Layout grafico generato con successo in: {nome_file}")
 
 def nodo_correzione(state: GraphState) -> dict:
-    system_prompt = """Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
+    system_prompt = r"""Sei un revisore editoriale. Il tuo compito è correggere la trascrizione fonetica di un singolo blocco di una lezione.
     Usa il testo delle slide fornito per capire e correggere i termini tecnici storpiati.
     REGOLE: Correggi la punteggiatura ma NON tagliare assolutamente nulla, NON riassumere per nessun motivo e mantieni il 100% del parlato originale."""
     
@@ -229,7 +235,7 @@ def nodo_correzione(state: GraphState) -> dict:
     return {"trascrizione_pulita": risposta.content}
 
 def nodo_generazione(state: GraphState) -> dict:
-    system_prompt = """Sei un Tutor Universitario e uno Scrittore Tecnico iper-dettagliato. 
+    system_prompt = r"""Sei un Tutor Universitario e uno Scrittore Tecnico iper-dettagliato.
     Stai analizzando un SINGOLO frammento di una lezione molto più ampia.
     
     REGOLE STILISTICHE E ANTI-SINTESI TASSATIVE: 
@@ -348,7 +354,12 @@ if __name__ == "__main__":
                 m1 = re.search(r"<concetti>(.*?)</concetti>", tg, re.DOTALL | re.IGNORECASE)
                 m2 = re.search(r"<spiegazione>(.*?)</spiegazione>", tg, re.DOTALL | re.IGNORECASE)
                 m3 = re.search(r"<digressioni>(.*?)</digressioni>", tg, re.DOTALL | re.IGNORECASE)
-                
+
+                # --- CANE DA GUARDIA: se mancano i tag obbligatori, forza il retry del blocco ---
+                if not m1 and not m2:
+                    print(f"\n    [DEBUG] Il modello ha risposto questo invece dei tag XML:\n    >>> {tg[:500]}...\n")
+                    raise ValueError("Il modello ha fallito la formattazione XML o ha restituito un errore.")
+
                 if m1 and m1.group(1).strip(): sezione_1 += m1.group(1).strip() + "\n\n"
                 if m2 and m2.group(1).strip(): sezione_2 += m2.group(1).strip() + "\n\n"
                 if m3 and m3.group(1).strip(): sezione_3 += m3.group(1).strip() + "\n\n"
