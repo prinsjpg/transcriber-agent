@@ -422,6 +422,18 @@ if __name__ == "__main__":
         print(f"\n---> Avvio Elaborazione Blocco {indice} di {len(blocchi_trascrizione)}...")
         
         slide_recuperate = motore_ricerca.invoke(blocco)
+        
+        # --- NUOVA STAMPA DELLE FONTI RAG ---
+        fonti_usate = set()
+        for doc in slide_recuperate:
+            match = re.search(r"--- FONTE: (.*?) ---", doc.page_content)
+            if match:
+                fonti_usate.add(match.group(1))
+        
+        testo_fonti = ", ".join(fonti_usate) if fonti_usate else "Nessun riferimento specifico"
+        print(f"    [RAG] Consultando le slide: {testo_fonti}")
+        # ------------------------------------
+
         slide_rilevanti_per_blocco = "\n\n".join([doc.page_content for doc in slide_recuperate])
         
         input_stato = {
