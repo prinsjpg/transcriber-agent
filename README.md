@@ -19,7 +19,8 @@ Il progetto offre tre script pensati per livelli crescenti di complessità. Ognu
 ## Caratteristiche
 
 * **Chunking intelligente**: divide il testo senza perdere il contesto grazie a un overlap di 150 parole; l'ultimo blocco è sempre pulito, senza frammenti orfani.
-* **Motore RAG locale (BM25)**: converte le slide PDF/PPTX in Markdown (MarkItDown) e recupera le sezioni pertinenti a ogni blocco. Le fonti consultate vengono stampate a terminale.
+* **Motore RAG locale (BM25)**: converte le slide PDF/PPTX in Markdown (MarkItDown) e recupera le sezioni pertinenti a ogni blocco. Le fonti consultate vengono stampate a terminale. Le conversioni sono messe in cache su disco (`.cache/`) e riusate se il file non cambia.
+* **Retriever ibrido opzionale**: se attivato (`usa_retriever_ibrido`, già on in `agente_esercizi.py`), affianca a BM25 un retriever semantico basato su embedding multilingua locali, fondendo i risultati con Reciprocal Rank Fusion — recupera le slide giuste anche con sinonimi/parafrasi. Richiede le dipendenze opzionali di `requirements-hybrid.txt`.
 * **Memoria a staffetta**: trasporta gli ultimi 4000 caratteri del blocco precedente per garantire continuità narrativa ed evitare ripetizioni locali.
 * **Cane da guardia XML**: se il modello non produce i tag richiesti (o l'API restituisce un errore/rate-limit), lo stesso blocco viene rielaborato automaticamente dopo una pausa, finché il formato non è corretto.
 * **Prompt blindati (raw string)**: i system prompt sono dichiarati come raw string per preservare la sintassi LaTeX destinata a MathJax.
@@ -31,6 +32,10 @@ Il progetto offre tre script pensati per livelli crescenti di complessità. Ognu
 1. Installa le dipendenze:
    ```bash
    pip install -r requirements.txt
+   ```
+   Solo per il retriever ibrido (usato da `agente_esercizi.py`), installa anche le dipendenze opzionali — al primo avvio scaricano un modello di embedding (~450MB):
+   ```bash
+   pip install -r requirements-hybrid.txt
    ```
 2. Copia `.env.example` in `.env` e inserisci le tue API key personali (una per ciascun provider/modello che intendi usare).
 3. Inserisci le slide (PDF/PPTX) e le trascrizioni (`.txt`/`.md`) nelle cartelle attese dall'agente scelto:

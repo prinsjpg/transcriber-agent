@@ -81,6 +81,7 @@ config = PipelineConfig(
     enable_exercise_css=True,
     enable_table_css=True,
     print_rag_sources=True,
+    usa_retriever_ibrido=True,  # richiede le dipendenze di requirements-hybrid.txt
 )
 
 

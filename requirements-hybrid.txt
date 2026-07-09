@@ -1,0 +1,8 @@
+# Dipendenze OPZIONALI per il retriever ibrido (BM25 + embedding semantici).
+# Necessarie solo se un agente ha usa_retriever_ibrido=True (es. agente_esercizi.py).
+# Installazione: pip install -r requirements-hybrid.txt
+#
+# Nota: sentence-transformers scarica torch (qualche centinaio di MB) e, al primo
+# avvio, il modello di embedding multilingua (~450MB) viene scaricato una tantum.
+langchain-huggingface
+sentence-transformers

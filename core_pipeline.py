@@ -68,6 +68,12 @@ class PipelineConfig:
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
+    # --- Retriever ---
+    usa_retriever_ibrido: bool = False    # affianca a BM25 un retriever semantico (embedding)
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    peso_bm25: float = 0.5                # peso del ramo lessicale nell'ensemble
+    peso_semantico: float = 0.5           # peso del ramo semantico nell'ensemble
+    retriever_k: int = 3                  # numero di slide recuperate per blocco
     # --- Parametri numerici ---
     max_parole: int = 1500
     overlap_parole: int = 150
@@ -240,6 +246,61 @@ def crea_nodo_generazione(llm, system_prompt: str, user_prompt_suffix: str = "")
         risposta = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         return {"documento_finale": risposta.content}
     return nodo_generazione
+
+
+class RetrieverIbrido:
+    """
+    Fonde un retriever lessicale (BM25) e uno semantico (embedding) con la
+    Reciprocal Rank Fusion pesata: ogni documento riceve un punteggio pari alla
+    somma, su entrambe le classifiche, di peso / (c + rango). È la stessa logica
+    dell'EnsembleRetriever di LangChain, reimplementata per non dipendere dal
+    meta-pacchetto `langchain` (i cui namespace cambiano tra le versioni).
+    """
+    def __init__(self, bm25, semantico, peso_bm25: float, peso_semantico: float, k: int, c: int = 60):
+        self.bm25 = bm25
+        self.semantico = semantico
+        self.peso_bm25 = peso_bm25
+        self.peso_semantico = peso_semantico
+        self.k = k
+        self.c = c
+
+    def invoke(self, query: str) -> list[Document]:
+        classifiche = [
+            (self.bm25.invoke(query), self.peso_bm25),
+            (self.semantico.invoke(query), self.peso_semantico),
+        ]
+        punteggi: dict[str, float] = {}
+        doc_per_chiave: dict[str, Document] = {}
+        for documenti, peso in classifiche:
+            for rango, doc in enumerate(documenti, start=1):
+                chiave = doc.page_content
+                doc_per_chiave[chiave] = doc
+                punteggi[chiave] = punteggi.get(chiave, 0.0) + peso * (1.0 / (self.c + rango))
+        ordinate = sorted(punteggi, key=punteggi.get, reverse=True)
+        return [doc_per_chiave[chiave] for chiave in ordinate[:self.k]]
+
+
+def costruisci_retriever(documenti_slide: list[Document], config: PipelineConfig):
+    """
+    Costruisce il motore di ricerca RAG. Di default usa il solo BM25 (lessicale).
+    Se `usa_retriever_ibrido` è attivo, lo fonde con un retriever semantico
+    basato su embedding (import "pigri": le dipendenze pesanti servono solo qui).
+    """
+    bm25 = BM25Retriever.from_documents(documenti_slide)
+    bm25.k = config.retriever_k
+
+    if not config.usa_retriever_ibrido:
+        return bm25
+
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_core.vectorstores import InMemoryVectorStore
+
+    print(f"[RAG] Inizializzo il retriever ibrido (embedding: {config.embedding_model})...")
+    embeddings = HuggingFaceEmbeddings(model_name=config.embedding_model)
+    vector_store = InMemoryVectorStore.from_documents(documenti_slide, embeddings)
+    semantico = vector_store.as_retriever(search_kwargs={"k": config.retriever_k})
+
+    return RetrieverIbrido(bm25, semantico, config.peso_bm25, config.peso_semantico, config.retriever_k)
 
 
 def costruisci_grafo(llm, config: PipelineConfig):
@@ -501,8 +562,7 @@ def run(config: PipelineConfig):
         print("Assicurati di aver inserito le slide e di aver installato 'markitdown[all]'. Uscita in corso...")
         return
 
-    motore_ricerca = BM25Retriever.from_documents(documenti_slide)
-    motore_ricerca.k = 3
+    motore_ricerca = costruisci_retriever(documenti_slide, config)
 
     blocchi_trascrizione = dividi_trascrizione_in_blocchi(trascrizione_completa, config.max_parole, config.overlap_parole)
     sezione_1, sezione_2, sezione_3 = "", "", ""
