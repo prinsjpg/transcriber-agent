@@ -69,7 +69,8 @@ class PipelineConfig:
     overlap_parole: int = 150
     memoria_caratteri: int = 4000
     pausa_secondi: int = 15
-    pausa_retry: int = 30
+    pausa_retry: int = 30       # attesa base del backoff esponenziale (primo fallimento)
+    backoff_max: int = 240      # tetto massimo dell'attesa tra i retry
     temperature: float = 0.3
     max_tokens: int = 8192
 
@@ -481,6 +482,7 @@ def run(config: PipelineConfig):
         }
 
         successo = False
+        tentativi_falliti = 0
         while not successo:
             try:
                 risultato = app.invoke(input_stato)
@@ -530,9 +532,12 @@ def run(config: PipelineConfig):
                 raise SystemExit()
 
             except Exception as e:
-                print(f"    [!] Il provider ha avuto un mancamento: {e}")
-                print(f"    [!] Niente panico. Pausa di {config.pausa_retry} secondi e poi riprovo il Blocco {indice}...")
-                time.sleep(config.pausa_retry)
+                tentativi_falliti += 1
+                # Backoff esponenziale: 30, 60, 120, 240... con tetto massimo (backoff_max).
+                attesa = min(config.pausa_retry * (2 ** (tentativi_falliti - 1)), config.backoff_max)
+                print(f"    [!] Il provider ha avuto un mancamento (tentativo {tentativi_falliti}): {e}")
+                print(f"    [!] Niente panico. Backoff esponenziale: pausa di {attesa} secondi e poi riprovo il Blocco {indice}...")
+                time.sleep(attesa)
 
     # --- FASE 3: REVISIONE FINALE E DEDUPLICAZIONE ---
     print("\n[REVISIONE FINALE] Lettura incrociata per eliminare i doppioni dalla Sezione 3...")
