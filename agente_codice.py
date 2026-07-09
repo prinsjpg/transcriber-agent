@@ -39,9 +39,9 @@ SYSTEM_PROMPT_GENERAZIONE = r"""Sei un Tutor Universitario e uno Scrittore Tecni
 
 
 config = PipelineConfig(
-    base_url="https://api.xiaomimimo.com/v1",
-    api_key_env="MIMO_API_KEY",
-    model="mimo-v2.5",
+    base_url="https://openrouter.ai/api/v1",
+    api_key_env="OPENROUTER_API_KEY_POOLSIDE_LAGUNA_M1",
+    model="poolside/laguna-m.1:free",
     cartella_slide="slide_codice_info",
     cartella_trascrizioni="testi_info",
     nome_output="dispensa_codice_perfetta.html",
