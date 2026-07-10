@@ -66,6 +66,7 @@ class PipelineConfig:
     enable_code_highlight: bool = False   # includi Highlight.js nel template
     enable_exercise_css: bool = False     # includi lo stile dei box esercizio
     enable_table_css: bool = False        # includi lo stile delle tabelle
+    proteggi_variabili_dollaro: bool = True  # racchiude le pseudo-variabili Yacc ($$/$1) in <code> per non collidere con MathJax
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
@@ -350,7 +351,41 @@ def genera_indice(testo_html: str) -> str:
     return str(soup)
 
 
+def _neutralizza_variabili_dollaro(testo: str) -> str:
+    """
+    Rete di sicurezza contro la collisione tra le pseudo-variabili di Yacc/Bison
+    ($$, $1, $2, ...) e i delimitatori matematici di MathJax ($ e $$). Nel testo
+    discorsivo queste variabili verrebbero interpretate come formule, sballando
+    l'impaginazione. Le racchiude in <code> (che MathJax ignora di default),
+    preservando invece il codice già formattato e le vere formule LaTeX.
+    """
+    segnaposto: list[str] = []
+
+    def _maschera(match):
+        segnaposto.append(match.group(0))
+        return f"\x00{len(segnaposto) - 1}\x00"
+
+    # 1. Proteggi il codice già delimitato: fence ```...``` e inline `...`.
+    testo = re.sub(r"```.*?```", _maschera, testo, flags=re.DOTALL)
+    testo = re.sub(r"`[^`\n]+`", _maschera, testo)
+    # 2. Proteggi la matematica LaTeX autentica: i blocchi display "$$...$$" che
+    #    contengono un comando LaTeX (\...) e l'inline "$ ... $" scritto con gli
+    #    spazi previsti dalla regola del prompt (es. "$ L(G) $").
+    testo = re.sub(r"\$\$[^$]*?\\[^$]*?\$\$", _maschera, testo, flags=re.DOTALL)
+    testo = re.sub(r"\$ [^$\n]+? \$", _maschera, testo)
+    # 3. Racchiudi in <code> le pseudo-variabili Yacc rimaste ($$, $$P1, $1, ...).
+    testo = re.sub(r"\$\$[A-Za-z0-9_]*|\$\d+", lambda m: f"<code>{m.group(0)}</code>", testo)
+    # 4. Ripristina le porzioni protette.
+    testo = re.sub(r"\x00(\d+)\x00", lambda m: segnaposto[int(m.group(1))], testo)
+    return testo
+
+
 def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
+    if config.proteggi_variabili_dollaro:
+        s1 = _neutralizza_variabili_dollaro(s1)
+        s2 = _neutralizza_variabili_dollaro(s2)
+        s3 = _neutralizza_variabili_dollaro(s3)
+
     def formatta_esercizi(testo_markdown):
         testo = re.sub(r"<box_esercizio>\s*", '<div class="exercise-box"><div class="exercise-title">📝 Esercizio Guidato / Procedura</div>\n\n', testo_markdown)
         testo = re.sub(r"\s*</box_esercizio>", '\n</div>\n', testo)

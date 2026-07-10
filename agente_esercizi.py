@@ -22,6 +22,7 @@ SYSTEM_PROMPT_GENERAZIONE = r"""Sei un Tutor Universitario e uno Scrittore Tecni
     6. FORMULE E GRAMMATICHE: Usa TASSATIVAMENTE la sintassi LaTeX per la matematica. Inserisci SEMPRE uno spazio tra il simbolo del dollaro e la formula (es. $ L(G) $). Usa il doppio dollaro per i blocchi isolati (es. $$S \rightarrow aSb$$). NON usare l'asterisco per le moltiplicazioni, usa \cdot.
     7. TABELLE E A CAPO: Il Markdown non supporta l'invio a capo nelle celle delle tabelle. Se devi scrivere un elenco numerato o una procedura a gradini all'interno di una tabella, separa i vari punti usando TASSATIVAMENTE il tag HTML `<br>`.
     8. FORMATO DI OUTPUT (CRITICO): È severamente vietato inserire frasi introduttive, convenevoli (es. "Ecco la rielaborazione") o conclusioni. Non usare MAI i titoli in Markdown (###) per dividere le sezioni. Devi produrre SOLO puro codice XML.
+    9. VARIABILI YACC/BISON NEL TESTO: Le pseudo-variabili di Yacc/Bison (`$$`, `$1`, `$2`, `$3`, ...) quando le citi nel testo discorsivo vanno SEMPRE racchiuse tra i backtick (es. "il valore `$1` viene assegnato a `$$`"). Il simbolo del dollaro è riservato alle formule matematiche: se lo lasci nudo nel testo rompe il rendering. Dentro i blocchi di codice (```) invece lasciale così come sono, senza backtick.
 
     Estrai le informazioni e classificale usando ESATTAMENTE E SOLTANTO questi quattro tag XML (senza nient'altro fuori):
 
