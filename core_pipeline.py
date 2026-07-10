@@ -377,7 +377,10 @@ def _neutralizza_variabili_dollaro(testo: str) -> str:
     #    contengono un comando LaTeX (\...) e l'inline "$ ... $" scritto con gli
     #    spazi previsti dalla regola del prompt (es. "$ L(G) $").
     testo = re.sub(r"\$\$[^$]*?\\[^$]*?\$\$", lambda m: _maschera(m.group(0)), testo, flags=re.DOTALL)
-    testo = re.sub(r"\$ [^$\n]+? \$", lambda m: _maschera(m.group(0)), testo)
+    # Il lookbehind (?<!\$) evita di partire dal secondo "$" di un "$$" Yacc, e il
+    # lookahead (?!\d) evita che il "$" di chiusura sia in realtà l'inizio di un "$N":
+    # così "$$ = $1" non viene scambiato per la formula inline "$ = $".
+    testo = re.sub(r"(?<!\$)\$ [^$\n]+? \$(?!\d)", lambda m: _maschera(m.group(0)), testo)
     # 4. Racchiudi in <code> le pseudo-variabili Yacc nude rimaste ($$, $$P1, $1, ...).
     testo = re.sub(r"\$\$[A-Za-z0-9_]*|\$\d+", lambda m: f"<code>{m.group(0)}</code>", testo)
     # 5. Ripristina le porzioni protette.
