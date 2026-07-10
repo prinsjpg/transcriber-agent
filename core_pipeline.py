@@ -361,21 +361,26 @@ def _neutralizza_variabili_dollaro(testo: str) -> str:
     """
     segnaposto: list[str] = []
 
-    def _maschera(match):
-        segnaposto.append(match.group(0))
+    def _maschera(testo_da_proteggere: str) -> str:
+        segnaposto.append(testo_da_proteggere)
         return f"\x00{len(segnaposto) - 1}\x00"
 
-    # 1. Proteggi il codice già delimitato: fence ```...``` e inline `...`.
-    testo = re.sub(r"```.*?```", _maschera, testo, flags=re.DOTALL)
-    testo = re.sub(r"`[^`\n]+`", _maschera, testo)
-    # 2. Proteggi la matematica LaTeX autentica: i blocchi display "$$...$$" che
+    # 1. Proteggi i fence di codice ```...```: restano grezzi (li converte markdown).
+    testo = re.sub(r"```.*?```", lambda m: _maschera(m.group(0)), testo, flags=re.DOTALL)
+    # 2. Converti gli span inline `...` in <code>...</code> e proteggili subito.
+    #    <code> è universale (MathJax lo salta e rende come codice in OGNI sezione,
+    #    anche in Concetti/digressioni/box che non passano dal renderer markdown),
+    #    quindi neutralizza i $-riferimenti anche quando il modello li ha già messi
+    #    tra backtick seguendo la regola 9 del prompt.
+    testo = re.sub(r"`([^`\n]+)`", lambda m: _maschera(f"<code>{m.group(1)}</code>"), testo)
+    # 3. Proteggi la matematica LaTeX autentica: i blocchi display "$$...$$" che
     #    contengono un comando LaTeX (\...) e l'inline "$ ... $" scritto con gli
     #    spazi previsti dalla regola del prompt (es. "$ L(G) $").
-    testo = re.sub(r"\$\$[^$]*?\\[^$]*?\$\$", _maschera, testo, flags=re.DOTALL)
-    testo = re.sub(r"\$ [^$\n]+? \$", _maschera, testo)
-    # 3. Racchiudi in <code> le pseudo-variabili Yacc rimaste ($$, $$P1, $1, ...).
+    testo = re.sub(r"\$\$[^$]*?\\[^$]*?\$\$", lambda m: _maschera(m.group(0)), testo, flags=re.DOTALL)
+    testo = re.sub(r"\$ [^$\n]+? \$", lambda m: _maschera(m.group(0)), testo)
+    # 4. Racchiudi in <code> le pseudo-variabili Yacc nude rimaste ($$, $$P1, $1, ...).
     testo = re.sub(r"\$\$[A-Za-z0-9_]*|\$\d+", lambda m: f"<code>{m.group(0)}</code>", testo)
-    # 4. Ripristina le porzioni protette.
+    # 5. Ripristina le porzioni protette.
     testo = re.sub(r"\x00(\d+)\x00", lambda m: segnaposto[int(m.group(1))], testo)
     return testo
 
