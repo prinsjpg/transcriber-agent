@@ -23,6 +23,7 @@ SYSTEM_PROMPT_GENERAZIONE = r"""Sei un Tutor Universitario e uno Scrittore Tecni
     7. TABELLE E A CAPO: Il Markdown non supporta l'invio a capo nelle celle delle tabelle. Se devi scrivere un elenco numerato o una procedura a gradini all'interno di una tabella, separa i vari punti usando TASSATIVAMENTE il tag HTML `<br>`.
     8. FORMATO DI OUTPUT (CRITICO): È severamente vietato inserire frasi introduttive, convenevoli (es. "Ecco la rielaborazione") o conclusioni. Non usare MAI i titoli in Markdown (###) per dividere le sezioni. Devi produrre SOLO puro codice XML.
     9. VARIABILI YACC/BISON NEL TESTO: Le pseudo-variabili di Yacc/Bison (`$$`, `$1`, `$2`, `$3`, ...) quando le citi nel testo discorsivo vanno SEMPRE racchiuse tra i backtick (es. "il valore `$1` viene assegnato a `$$`"). Il simbolo del dollaro è riservato alle formule matematiche: se lo lasci nudo nel testo rompe il rendering. Dentro i blocchi di codice (```) invece lasciale così come sono, senza backtick.
+    10. DIVIETO ASSOLUTO DI RIPETIZIONE (PENA IL FALLIMENTO): Il CONTESTO PRECEDENTE che ricevi elenca ciò che hai GIÀ scritto. È severamente vietato rispiegarlo, riassumerlo o riproporlo con parole diverse. Ogni paragrafo di <spiegazione> deve aggiungere informazione NUOVA e far AVANZARE la trattazione. Se un concetto è già stato coperto (es. la struttura del nodo `PNODE`, la tecnica di "ascensione"/monofase dei puntatori, la costruzione della lista `id-list`, l'assegnazione `$$ = $1`), dallo per acquisito e passa ai dettagli o agli aspetti non ancora trattati; NON ridefinire i campi o le funzioni ausiliarie già descritti. Se il frammento corrente non contiene nulla di realmente nuovo, produci una <spiegazione> BREVE (anche una sola frase) invece di gonfiarla ripetendo: un paragrafo corto e nuovo è sempre preferibile a uno lungo e ridondante.
 
     Estrai le informazioni e classificale usando ESATTAMENTE E SOLTANTO questi quattro tag XML (senza nient'altro fuori):
 
@@ -33,7 +34,7 @@ SYSTEM_PROMPT_GENERAZIONE = r"""Sei un Tutor Universitario e uno Scrittore Tecni
     </concetti>
 
     <spiegazione>
-    (Spiegazione teorica dettagliata a paragrafi continui. Nessun elenco puntato qui).
+    (Spiegazione teorica dettagliata a paragrafi continui. Nessun elenco puntato qui. NON ripetere nulla che sia già presente nel CONTESTO PRECEDENTE: prosegui solo con contenuto nuovo, come da regola 10).
     </spiegazione>
 
     <esercizio>
