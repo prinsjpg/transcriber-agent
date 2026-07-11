@@ -69,6 +69,7 @@ class PipelineConfig:
     proteggi_variabili_dollaro: bool = True  # racchiude le pseudo-variabili Yacc ($$/$1) in <code> per non collidere con MathJax
     allega_slide_immagini: bool = False   # incastona la slide PDF piu' rilevante come immagine sotto ogni esercizio
     dpi_slide: int = 110                  # risoluzione di rendering delle pagine PDF in PNG
+    ritaglia_slide: bool = True           # ritaglia i margini bianchi/footer della slide prima di renderla (immagini piu' leggere e leggibili)
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
@@ -276,14 +277,49 @@ def estrai_slide_per_pagina(cartella: str, include_code: bool = False,
     return documenti
 
 
-def _rendi_pagina_pdf_base64(percorso: str, pagina: int, dpi: int = 110) -> str:
-    """Rende una singola pagina PDF in PNG e la restituisce come stringa base64."""
+def _bbox_contenuto(page, margine: float = 6.0):
+    """
+    Rettangolo che racchiude il contenuto reale di una pagina PDF (blocchi di testo
+    e immagini), allargato di un piccolo margine. Serve a ritagliare i bordi bianchi
+    e i footer (numero di pagina) quando la slide viene resa come immagine: il PNG
+    risulta piu' leggero e la slide piu' leggibile. Se la pagina e' vuota restituisce
+    l'intera pagina.
+    """
+    import fitz
+
+    rect = None
+    for blocco in page.get_text("blocks"):
+        r = fitz.Rect(blocco[:4])
+        rect = r if rect is None else rect | r
+    for img in page.get_images(full=True):
+        try:
+            for r in page.get_image_rects(img[0]):
+                rect = r if rect is None else rect | r
+        except Exception:
+            pass
+
+    if rect is None or rect.is_empty or rect.is_infinite:
+        return page.rect
+
+    rect = fitz.Rect(rect.x0 - margine, rect.y0 - margine, rect.x1 + margine, rect.y1 + margine)
+    rect &= page.rect  # non sconfinare oltre i bordi della pagina
+    return rect
+
+
+def _rendi_pagina_pdf_base64(percorso: str, pagina: int, dpi: int = 110, ritaglia: bool = True) -> str:
+    """Rende una singola pagina PDF in PNG e la restituisce come stringa base64.
+
+    Se `ritaglia` e' attivo, la pagina viene tagliata sul suo contenuto reale
+    (via `_bbox_contenuto`) togliendo margini bianchi e footer.
+    """
     import base64
     import fitz
 
     doc = fitz.open(percorso)
     try:
-        pix = doc.load_page(pagina).get_pixmap(dpi=dpi)
+        page = doc.load_page(pagina)
+        clip = _bbox_contenuto(page) if ritaglia else None
+        pix = page.get_pixmap(dpi=dpi, clip=clip)
         png = pix.tobytes("png")
     finally:
         doc.close()
@@ -456,7 +492,10 @@ def genera_indice(testo_html: str) -> str:
 
     container = soup.find('div', class_='container')
     if container and container.h1:
-        container.h1.insert_after(BeautifulSoup(indice_html, 'html.parser'))
+        # Inserisci l'indice dopo la riga del tempo di lettura, se presente,
+        # altrimenti subito dopo il titolo.
+        ancora = container.find('p', class_='meta-lettura') or container.h1
+        ancora.insert_after(BeautifulSoup(indice_html, 'html.parser'))
     elif soup.body:
         soup.body.insert(0, BeautifulSoup(indice_html, 'html.parser'))
 
@@ -541,6 +580,16 @@ def _neutralizza_variabili_dollaro(testo: str) -> str:
     return testo
 
 
+def _tempo_lettura_minuti(*testi: str, parole_al_minuto: int = 200) -> int:
+    """Stima i minuti di lettura contando le parole del testo, al netto dei tag HTML
+    e delle immagini base64 delle slide. Minimo 1 minuto."""
+    testo = " ".join(t for t in testi if t)
+    testo = re.sub(r'<details class="slide-originale">.*?</details>', ' ', testo, flags=re.DOTALL)
+    testo = re.sub(r'<[^>]+>', ' ', testo)
+    n_parole = len(testo.split())
+    return max(1, round(n_parole / parole_al_minuto))
+
+
 def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
     # Rimappa i simboli PUA (tofu) del font Symbol prima di ogni altra cosa.
     s1, s2, s3 = _normalizza_simboli(s1), _normalizza_simboli(s2), _normalizza_simboli(s3)
@@ -549,6 +598,8 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         s1 = _neutralizza_variabili_dollaro(s1)
         s2 = _neutralizza_variabili_dollaro(s2)
         s3 = _neutralizza_variabili_dollaro(s3)
+
+    minuti_lettura = _tempo_lettura_minuti(s1, s2, s3)
 
     def formatta_esercizi(testo_markdown):
         testo = re.sub(r"<box_esercizio>\s*", '<div class="exercise-box"><div class="exercise-title">📝 Esercizio Guidato / Procedura</div>\n\n', testo_markdown)
@@ -630,6 +681,28 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
 """
     else:
         highlight_head = ""
+
+    # --- Navigazione: evidenzia nell'indice la sezione visibile (scroll-spy) ---
+    nav_head = """
+        <script>
+            // Scroll-spy: mano a mano che si scorre, evidenzia nell'indice la voce
+            // della sezione attualmente inquadrata.
+            document.addEventListener('DOMContentLoaded', function () {
+                var links = document.querySelectorAll('.indice a');
+                if (!links.length) { return; }
+                var mappa = {};
+                links.forEach(function (a) { mappa[a.getAttribute('href').slice(1)] = a; });
+                var osservatore = new IntersectionObserver(function (voci) {
+                    voci.forEach(function (voce) {
+                        if (!voce.isIntersecting) { return; }
+                        links.forEach(function (a) { a.classList.remove('attivo'); });
+                        if (mappa[voce.target.id]) { mappa[voce.target.id].classList.add('attivo'); }
+                    });
+                }, { rootMargin: '0px 0px -75% 0px' });
+                document.querySelectorAll('h2[id], h3[id]').forEach(function (h) { osservatore.observe(h); });
+            });
+        </script>
+"""
 
     # --- CSS opzionali ---
     css_extra = ""
@@ -716,9 +789,11 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         </script>
         <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 {highlight_head}
+{nav_head}
 {css_extra_block}
         <style>
             @page {{ size: A4; margin: 20mm 18mm; }}
+            html {{ scroll-behavior: smooth; }}
             body {{
                 max-width: 800px;
                 margin: 40px auto;
@@ -727,6 +802,7 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
                 color: #2c3e50;
                 padding: 0 20px;
             }}
+            .meta-lettura {{ color: #718096; font-size: 10pt; font-style: italic; margin: -20px 0 30px; }}
             .indice {{
                 background-color: #f8f9fa;
                 border-left: 4px solid #3498db;
@@ -736,6 +812,40 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
             }}
             .indice a {{ text-decoration: none; color: #2980b9; }}
             .indice a:hover {{ text-decoration: underline; }}
+            .indice a.attivo {{ font-weight: 700; color: #1a365d; }}
+            .btn-stampa, .btn-su {{
+                position: fixed;
+                bottom: 24px;
+                z-index: 999;
+                border: none;
+                cursor: pointer;
+                font-family: 'Inter', sans-serif;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            }}
+            .btn-stampa {{
+                right: 24px;
+                background: #2b6cb0;
+                color: #fff;
+                padding: 12px 18px;
+                border-radius: 30px;
+                font-size: 10.5pt;
+                font-weight: 600;
+            }}
+            .btn-stampa:hover {{ background: #2c5282; }}
+            .btn-su {{
+                left: 24px;
+                background: #fff;
+                color: #2b6cb0;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                font-size: 18pt;
+                line-height: 44px;
+                text-align: center;
+                text-decoration: none;
+            }}
+            .btn-su:hover {{ background: #edf2f7; }}
+            @media print {{ .btn-stampa, .btn-su {{ display: none; }} }}
 
             h1 {{ color: #1a365d; font-size: 22pt; border-bottom: 2px solid #2b6cb0; padding-bottom: 5px; margin-top: 40px; text-transform: uppercase; letter-spacing: 0.5px; }}
             h2 {{ color: #2b6cb0; font-size: 15pt; margin-top: 35px; margin-bottom: 15px; border-left: 5px solid #2b6cb0; padding-left: 10px; }}
@@ -748,8 +858,11 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         </style>
     </head>
     <body>
+        <button class="btn-stampa" onclick="window.print()">🖨️ Stampa / Salva PDF</button>
+        <a class="btn-su" href="#top" title="Torna su">↑</a>
         <div class="container">
-            <h1>Dispensa Ufficiale del Corso</h1>
+            <h1 id="top">Dispensa Ufficiale del Corso</h1>
+            <p class="meta-lettura">⏱️ Tempo di lettura stimato: ~{minuti_lettura} min</p>
 {corpo_sezioni}
         </div>
     </body>
@@ -865,7 +978,7 @@ def run(config: PipelineConfig):
                 chiave = (meta["percorso"], meta["pagina"])
                 if chiave not in slide_allegate:
                     try:
-                        b64 = _rendi_pagina_pdf_base64(meta["percorso"], meta["pagina"], config.dpi_slide)
+                        b64 = _rendi_pagina_pdf_base64(meta["percorso"], meta["pagina"], config.dpi_slide, config.ritaglia_slide)
                         slide_immagine_html = (
                             '\n\n<details class="slide-originale">'
                             f'<summary>📄 Slide originale — {meta.get("fonte", "")} (pag. {meta["pagina"] + 1})</summary>\n'
@@ -957,6 +1070,35 @@ def run(config: PipelineConfig):
                 print(f"    [!] Il provider ha avuto un mancamento (tentativo {tentativi_falliti}): {e}")
                 print(f"    [!] Niente panico. Backoff esponenziale: pausa di {attesa} secondi e poi riprovo il Blocco {indice}...")
                 time.sleep(attesa)
+
+    # --- FASE 2b: RETE DI SICUREZZA SUI CONCETTI ---
+    # Il modello free a volte non emette alcun contenuto <concetti> per l'intera
+    # lezione, lasciando la sezione vuota. Se c'e' comunque teoria, sintetizziamo i
+    # Concetti a posteriori con una singola chiamata dedicata: meglio ricavarli dal
+    # testo gia' prodotto che perdere del tutto la sezione.
+    if not sezione_1.strip() and sezione_2.strip():
+        print("\n[CONCETTI] Sezione Concetti vuota: la sintetizzo dal testo gia' prodotto...")
+        # Togli le immagini base64 delle slide: pesano centinaia di KB e non servono.
+        teoria_per_sintesi = re.sub(
+            r'<details class="slide-originale">.*?</details>', '', sezione_2, flags=re.DOTALL
+        )
+        prompt_concetti = f"""Sei un autore di libri di testo universitari.
+    Leggi la trattazione qui sotto ed estraine i CONCETTI CHIAVE: 4 o 5 righe in stile
+    impersonale e sintetico, come il riquadro riassuntivo iniziale di un capitolo.
+    NON annunciare cosa stai per scrivere, NON usare elenchi puntati, NON aggiungere
+    titoli o meta-commenti: restituisci SOLO il testo dei concetti, in italiano.
+
+    --- TRATTAZIONE ---
+    {teoria_per_sintesi[:12000]}
+    """
+        try:
+            risposta_concetti = llm.invoke([HumanMessage(content=prompt_concetti)])
+            testo_concetti = risposta_concetti.content.strip()
+            if testo_concetti:
+                sezione_1 = testo_concetti + "\n\n"
+                print("[✓] Concetti sintetizzati e reintegrati nella dispensa.")
+        except Exception as e:
+            print(f"[!] Sintesi dei Concetti fallita ({e}). La sezione resta omessa.")
 
     # --- FASE 3: REVISIONE FINALE E DEDUPLICAZIONE ---
     print("\n[REVISIONE FINALE] Lettura incrociata per eliminare i doppioni dalla Sezione 3...")
