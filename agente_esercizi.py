@@ -69,6 +69,7 @@ config = PipelineConfig(
     base_url="https://openrouter.ai/api/v1",
     api_key_env="OPENROUTER_API_KEY_POOLSIDE_LAGUNA_M1",
     model="poolside/laguna-m.1:free",
+    
     cartella_slide="slide_compilatori",
     cartella_trascrizioni="testi_compilatori",
     nome_output="dispensa_compilatori.html",
@@ -84,7 +85,7 @@ config = PipelineConfig(
     enable_table_css=True,
     print_rag_sources=True,
     usa_retriever_ibrido=True,  # richiede le dipendenze di requirements-hybrid.txt
-    allega_slide_immagini=True,  # [prototipo] slide originale come immagine sotto ogni esercizio
+    allega_slide_immagini=True,  # slide originale come immagine sotto ogni esercizio
 )
 
 

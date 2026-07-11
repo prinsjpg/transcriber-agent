@@ -67,7 +67,7 @@ class PipelineConfig:
     enable_exercise_css: bool = False     # includi lo stile dei box esercizio
     enable_table_css: bool = False        # includi lo stile delle tabelle
     proteggi_variabili_dollaro: bool = True  # racchiude le pseudo-variabili Yacc ($$/$1) in <code> per non collidere con MathJax
-    allega_slide_immagini: bool = False   # [prototipo] incastona la slide PDF piu' rilevante come immagine sotto ogni esercizio
+    allega_slide_immagini: bool = False   # incastona la slide PDF piu' rilevante come immagine sotto ogni esercizio
     dpi_slide: int = 110                  # risoluzione di rendering delle pagine PDF in PNG
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
@@ -93,9 +93,17 @@ class PipelineConfig:
 # ==========================================================================
 # INGESTION E PREPROCESSING
 # ==========================================================================
-def _percorso_cache(cache_dir: str, percorso_file: str) -> str:
-    """Nome univoco del file di cache, derivato dal percorso assoluto della slide."""
-    chiave = hashlib.md5(os.path.abspath(percorso_file).encode('utf-8')).hexdigest()
+def _percorso_cache(cache_dir: str, percorso_file: str, namespace: str = "") -> str:
+    """
+    Nome univoco del file di cache, derivato dal percorso assoluto della slide.
+    Il `namespace` distingue cache diverse per lo stesso file (es. il testo intero
+    di MarkItDown vs. il testo pagina-per-pagina). Con namespace vuoto la chiave
+    resta identica a prima (retrocompatibile con le cache già su disco).
+    """
+    chiave_base = os.path.abspath(percorso_file)
+    if namespace:
+        chiave_base = f"{namespace}|{chiave_base}"
+    chiave = hashlib.md5(chiave_base.encode('utf-8')).hexdigest()
     return os.path.join(cache_dir, f"{chiave}.json")
 
 
@@ -122,6 +130,33 @@ def _scrivi_cache(cache_dir: str, percorso_file: str, testo: str):
         stat = os.stat(percorso_file)
         with open(_percorso_cache(cache_dir, percorso_file), 'w', encoding='utf-8') as f:
             json.dump({'mtime': stat.st_mtime, 'size': stat.st_size, 'text': testo}, f)
+    except Exception:
+        pass
+
+
+def _leggi_cache_pagine(cache_dir: str, percorso_file: str):
+    """Restituisce le pagine in cache (lista di {pagina, testo}) se il PDF non è cambiato."""
+    percorso_cache = _percorso_cache(cache_dir, percorso_file, namespace="pagine")
+    if not os.path.exists(percorso_cache):
+        return None
+    try:
+        stat = os.stat(percorso_file)
+        with open(percorso_cache, 'r', encoding='utf-8') as f:
+            dati = json.load(f)
+        if dati.get('mtime') == stat.st_mtime and dati.get('size') == stat.st_size:
+            return dati.get('pagine')
+    except Exception:
+        return None
+    return None
+
+
+def _scrivi_cache_pagine(cache_dir: str, percorso_file: str, pagine: list):
+    """Salva su disco il testo pagina-per-pagina insieme a mtime + size del sorgente."""
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        stat = os.stat(percorso_file)
+        with open(_percorso_cache(cache_dir, percorso_file, namespace="pagine"), 'w', encoding='utf-8') as f:
+            json.dump({'mtime': stat.st_mtime, 'size': stat.st_size, 'pagine': pagine}, f)
     except Exception:
         pass
 
@@ -189,13 +224,15 @@ def _estrai_file_codice(cartella: str) -> list[Document]:
     return documenti
 
 
-def estrai_slide_per_pagina(cartella: str, include_code: bool = False) -> list[Document]:
+def estrai_slide_per_pagina(cartella: str, include_code: bool = False,
+                            usa_cache: bool = True, cache_dir: str = ".cache/markitdown") -> list[Document]:
     """
     Variante di ingestione a granularità di PAGINA per i soli PDF: produce un
     Document per ogni pagina, con il testo estratto (via PyMuPDF) e i metadati
     (percorso, numero di pagina, nome file) che servono poi a rendere quella
     esatta pagina come immagine. Le pagine senza testo non sono indicizzabili dal
-    RAG lessicale/semantico e vengono saltate (limite noto del prototipo).
+    RAG lessicale/semantico e vengono saltate. Il testo estratto viene messo in
+    cache su disco (chiave mtime + size) e riusato se il PDF non è cambiato.
     """
     import fitz
 
@@ -206,23 +243,32 @@ def estrai_slide_per_pagina(cartella: str, include_code: bool = False) -> list[D
 
     for percorso in file_pdf:
         nome_file = os.path.basename(percorso)
-        try:
-            doc = fitz.open(percorso)
-        except Exception as e:
-            print(f"    [!] Impossibile aprire {nome_file}: {e}")
-            continue
-        pagine_con_testo = 0
-        for n in range(doc.page_count):
-            testo = _normalizza_simboli(doc.load_page(n).get_text())
-            if not testo.strip():
+
+        pagine = _leggi_cache_pagine(cache_dir, percorso) if usa_cache else None
+        if pagine is not None:
+            origine = "da cache"
+        else:
+            try:
+                doc = fitz.open(percorso)
+            except Exception as e:
+                print(f"    [!] Impossibile aprire {nome_file}: {e}")
                 continue
-            pagine_con_testo += 1
+            pagine = []
+            for n in range(doc.page_count):
+                testo = _normalizza_simboli(doc.load_page(n).get_text())
+                if testo.strip():
+                    pagine.append({"pagina": n, "testo": testo})
+            doc.close()
+            if usa_cache:
+                _scrivi_cache_pagine(cache_dir, percorso, pagine)
+            origine = "estratte"
+
+        for p in pagine:
             documenti.append(Document(
-                page_content=f"--- FONTE: {nome_file} (pag. {n + 1}) ---\n{testo}",
-                metadata={"percorso": percorso, "pagina": n, "fonte": nome_file},
+                page_content=f"--- FONTE: {nome_file} (pag. {p['pagina'] + 1}) ---\n{p['testo']}",
+                metadata={"percorso": percorso, "pagina": p["pagina"], "fonte": nome_file},
             ))
-        doc.close()
-        print(f"    - Slide indicizzate per pagina: {nome_file} ({pagine_con_testo} pagine con testo)")
+        print(f"    - Slide indicizzate per pagina ({origine}): {nome_file} ({len(pagine)} pagine con testo)")
 
     if include_code:
         documenti.extend(_estrai_file_codice(cartella))
@@ -747,7 +793,12 @@ def run(config: PipelineConfig):
     print(f"\n[RAG] Lettura di tutti i documenti nella cartella '{config.cartella_slide}'...")
     if config.allega_slide_immagini:
         print("[RAG] Modalità immagini attiva: indicizzazione delle slide PDF a granularità di pagina.")
-        documenti_slide = estrai_slide_per_pagina(config.cartella_slide, include_code=config.include_code_files)
+        documenti_slide = estrai_slide_per_pagina(
+            config.cartella_slide,
+            include_code=config.include_code_files,
+            usa_cache=config.usa_cache,
+            cache_dir=config.cache_dir,
+        )
     else:
         documenti_slide = estrai_materiale_didattico(
             config.cartella_slide,
@@ -787,8 +838,8 @@ def run(config: PipelineConfig):
 
         slide_rilevanti_per_blocco = "\n\n".join([doc.page_content for doc in slide_recuperate])
 
-        # [prototipo] Rende la slide più rilevante come immagine, da allegare
-        # all'eventuale esercizio di questo blocco (una volta per blocco).
+        # Rende la slide più rilevante come immagine, da allegare all'eventuale
+        # esercizio di questo blocco (una volta per blocco).
         slide_immagine_html = ""
         if config.allega_slide_immagini and slide_recuperate:
             meta = slide_recuperate[0].metadata or {}
