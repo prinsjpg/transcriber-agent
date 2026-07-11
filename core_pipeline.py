@@ -148,6 +148,7 @@ def estrai_materiale_didattico(cartella: str, include_code: bool = False,
         testo_cache = _leggi_cache(cache_dir, percorso) if usa_cache else None
         if testo_cache is not None:
             print(f"    - Slide da cache: {nome_file}")
+            testo_cache = _normalizza_simboli(testo_cache)
             documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{testo_cache}"))
             continue
 
@@ -157,7 +158,8 @@ def estrai_materiale_didattico(cartella: str, include_code: bool = False,
             if risultato.text_content:
                 if usa_cache:
                     _scrivi_cache(cache_dir, percorso, risultato.text_content)
-                documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{risultato.text_content}"))
+                testo_slide = _normalizza_simboli(risultato.text_content)
+                documenti.append(Document(page_content=f"--- FONTE: {nome_file} ---\n{testo_slide}"))
         except Exception as e:
             print(f"    [!] Errore conversione {nome_file}: {e}")
 
@@ -351,6 +353,47 @@ def genera_indice(testo_html: str) -> str:
     return str(soup)
 
 
+# Tabella di codifica del font Adobe "Symbol": codice carattere -> Unicode reale.
+# Le slide PDF che usano il font Symbol per i simboli matematici, una volta
+# estratte, escono come codepoint della Private Use Area (0xF000 + codice) che
+# nessun font sa disegnare (compaiono come "quadratini"/tofu). Questa mappa li
+# riporta ai caratteri Unicode corretti (frecce, operatori insiemistici, greche).
+_SYMBOL_A_UNICODE = {
+    0x22: "∀", 0x24: "∃", 0x27: "∋", 0x40: "≅",
+    0x41: "Α", 0x42: "Β", 0x43: "Χ", 0x44: "Δ", 0x45: "Ε", 0x46: "Φ",
+    0x47: "Γ", 0x48: "Η", 0x49: "Ι", 0x4A: "ϑ", 0x4B: "Κ", 0x4C: "Λ",
+    0x4D: "Μ", 0x4E: "Ν", 0x4F: "Ο", 0x50: "Π", 0x51: "Θ", 0x52: "Ρ",
+    0x53: "Σ", 0x54: "Τ", 0x55: "Υ", 0x56: "ς", 0x57: "Ω", 0x58: "Ξ",
+    0x59: "Ψ", 0x5A: "Ζ",
+    0x61: "α", 0x62: "β", 0x63: "χ", 0x64: "δ", 0x65: "ε", 0x66: "φ",
+    0x67: "γ", 0x68: "η", 0x69: "ι", 0x6A: "ϕ", 0x6B: "κ", 0x6C: "λ",
+    0x6D: "μ", 0x6E: "ν", 0x6F: "ο", 0x70: "π", 0x71: "θ", 0x72: "ρ",
+    0x73: "σ", 0x74: "τ", 0x75: "υ", 0x76: "ϖ", 0x77: "ω", 0x78: "ξ",
+    0x79: "ψ", 0x7A: "ζ",
+    0xA2: "′", 0xA3: "≤", 0xA5: "∞", 0xAB: "↔", 0xAC: "←", 0xAD: "↑",
+    0xAE: "→", 0xAF: "↓", 0xB0: "°", 0xB1: "±", 0xB2: "″", 0xB3: "≥",
+    0xB4: "×", 0xB5: "∝", 0xB6: "∂", 0xB7: "•", 0xB8: "÷", 0xB9: "≠",
+    0xBA: "≡", 0xBB: "≈", 0xC6: "∅", 0xC7: "∩", 0xC8: "∪", 0xC9: "⊃",
+    0xCA: "⊇", 0xCB: "⊄", 0xCC: "⊂", 0xCD: "⊆", 0xCE: "∈", 0xCF: "∉",
+    0xD1: "∇", 0xD5: "∏", 0xD6: "√", 0xD7: "⋅", 0xD8: "¬", 0xD9: "∧",
+    0xDA: "∨", 0xDB: "⇔", 0xDC: "⇐", 0xDD: "⇑", 0xDE: "⇒", 0xDF: "⇓",
+    0xE5: "∑", 0xF2: "∫",
+}
+_SIMBOLI_PUA = {chr(0xF000 + codice): ch for codice, ch in _SYMBOL_A_UNICODE.items()}
+_RE_SIMBOLI_PUA = re.compile("|".join(map(re.escape, _SIMBOLI_PUA)))
+
+
+def _normalizza_simboli(testo: str) -> str:
+    """
+    Riporta a Unicode i simboli del font Symbol estratti dai PDF come codepoint
+    della Private Use Area (i "quadratini"). Se non c'è nulla da rimappare il
+    testo torna invariato.
+    """
+    if not testo:
+        return testo
+    return _RE_SIMBOLI_PUA.sub(lambda m: _SIMBOLI_PUA[m.group(0)], testo)
+
+
 def _neutralizza_variabili_dollaro(testo: str) -> str:
     """
     Rete di sicurezza contro la collisione tra le pseudo-variabili di Yacc/Bison
@@ -389,6 +432,9 @@ def _neutralizza_variabili_dollaro(testo: str) -> str:
 
 
 def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
+    # Rimappa i simboli PUA (tofu) del font Symbol prima di ogni altra cosa.
+    s1, s2, s3 = _normalizza_simboli(s1), _normalizza_simboli(s2), _normalizza_simboli(s3)
+
     if config.proteggi_variabili_dollaro:
         s1 = _neutralizza_variabili_dollaro(s1)
         s2 = _neutralizza_variabili_dollaro(s2)
@@ -440,6 +486,17 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
         <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script>hljs.highlightAll();</script>
+        <script>
+            // Compatta i blocchi di codice piu' lunghi cosi' restano leggibili e
+            // spezzano meno le pagine in stampa (soglie a numero di righe).
+            document.addEventListener('DOMContentLoaded', function () {
+                document.querySelectorAll('pre').forEach(function (pre) {
+                    var righe = (pre.innerText.match(/\\n/g) || []).length + 1;
+                    if (righe > 32) { pre.classList.add('code-lunghissimo'); }
+                    else if (righe > 18) { pre.classList.add('code-lungo'); }
+                });
+            });
+        </script>
 """
     else:
         highlight_head = ""
@@ -448,14 +505,23 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
     css_extra = ""
     if config.enable_code_highlight:
         css_extra += """
+        pre {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            overflow-x: auto;
+        }
         pre code {
             border-radius: 8px;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 10.5pt;
-            padding: 15px;
+            font-family: 'Consolas', 'Courier New', Courier, monospace;
+            font-size: 9.5pt;
+            line-height: 1.4;
+            padding: 14px 15px;
             margin-top: 15px;
             margin-bottom: 15px;
-        }"""
+        }
+        /* Blocchi lunghi: carattere e interlinea ridotti per stare in pagina. */
+        pre.code-lungo code { font-size: 8pt; line-height: 1.3; }
+        pre.code-lunghissimo code { font-size: 7pt; line-height: 1.25; }"""
     if config.enable_exercise_css:
         css_extra += """
         .exercise-box {
