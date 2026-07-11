@@ -70,6 +70,12 @@ class PipelineConfig:
     allega_slide_immagini: bool = False   # incastona la slide PDF piu' rilevante come immagine sotto ogni esercizio
     dpi_slide: int = 110                  # risoluzione di rendering delle pagine PDF in PNG
     ritaglia_slide: bool = True           # ritaglia i margini bianchi/footer della slide prima di renderla (immagini piu' leggere e leggibili)
+    # --- Arricchimenti finali ---
+    genera_glossario: bool = False        # sezione finale con le definizioni dei termini tecnici (quelli tra backtick)
+    genera_quiz: bool = False             # sezione finale di autovalutazione (domande con risposta a scomparsa)
+    num_domande_quiz: int = 6             # quante domande generare per il quiz
+    abilita_mermaid: bool = False         # rende i blocchi ```mermaid come diagrammi (Mermaid.js)
+    cache_generazione: bool = False       # riusa l'output del modello per i blocchi identici (rigenerazione incrementale)
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
@@ -158,6 +164,39 @@ def _scrivi_cache_pagine(cache_dir: str, percorso_file: str, pagine: list):
         stat = os.stat(percorso_file)
         with open(_percorso_cache(cache_dir, percorso_file, namespace="pagine"), 'w', encoding='utf-8') as f:
             json.dump({'mtime': stat.st_mtime, 'size': stat.st_size, 'pagine': pagine}, f)
+    except Exception:
+        pass
+
+
+def _chiave_generazione(*parti: str) -> str:
+    """Hash deterministico degli input che determinano l'output di un blocco
+    (modello, prompt, slide recuperate, testo del blocco, memoria). Se nulla di
+    tutto cio' cambia, l'output puo' essere riusato dalla cache."""
+    h = hashlib.md5()
+    for parte in parti:
+        h.update((parte or "").encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _leggi_cache_generazione(cache_dir: str, chiave: str):
+    """Restituisce l'output del modello gia' generato per questo blocco, se in cache."""
+    percorso = os.path.join(cache_dir, f"gen_{chiave}.json")
+    if not os.path.exists(percorso):
+        return None
+    try:
+        with open(percorso, 'r', encoding='utf-8') as f:
+            return json.load(f).get('documento_finale')
+    except Exception:
+        return None
+
+
+def _scrivi_cache_generazione(cache_dir: str, chiave: str, documento: str):
+    """Salva su disco l'output del modello per un blocco (rigenerazione incrementale)."""
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(os.path.join(cache_dir, f"gen_{chiave}.json"), 'w', encoding='utf-8') as f:
+            json.dump({'documento_finale': documento}, f)
     except Exception:
         pass
 
@@ -590,7 +629,122 @@ def _tempo_lettura_minuti(*testi: str, parole_al_minuto: int = 200) -> int:
     return max(1, round(n_parole / parole_al_minuto))
 
 
-def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
+def _raccogli_termini_tecnici(*sezioni: str, massimo: int = 60) -> list[str]:
+    """Estrae i termini tra backtick (nomi di token/variabili/classi, per la regola 5
+    del prompt) dalle sezioni, escludendo i blocchi di codice e le pseudo-variabili
+    Yacc, e li deduplica senza distinzione di maiuscole/minuscole."""
+    testo = "\n".join(s for s in sezioni if s)
+    testo = re.sub(r"```.*?```", " ", testo, flags=re.DOTALL)  # via i fence di codice
+    visti: dict[str, str] = {}
+    for m in re.finditer(r"`([^`\n]+)`", testo):
+        termine = m.group(1).strip()
+        if not termine or termine.startswith("$") or len(termine) > 40:
+            continue
+        chiave = termine.lower()
+        if chiave not in visti:
+            visti[chiave] = termine
+    return sorted(visti.values(), key=str.lower)[:massimo]
+
+
+def _genera_glossario(llm, termini: list[str]) -> str:
+    """Chiede al modello una definizione sintetica per ogni termine e costruisce
+    l'HTML del glossario (lista di definizioni). Stringa vuota se non ci sono
+    termini o la chiamata fallisce."""
+    if not termini:
+        return ""
+    elenco = "\n".join(f"- {t}" for t in termini)
+    prompt = f"""Sei un autore di glossari tecnici universitari.
+    Per OGNI termine dell'elenco fornisci una definizione sintetica (1-2 frasi) in italiano.
+    Rispondi con ESATTAMENTE una riga per termine, nel formato:
+    termine :: definizione
+    Non aggiungere altro testo, titoli, numerazione o righe vuote. Se un termine non emerge
+    dal contesto (corso di compilatori/informatica), dai comunque la definizione tecnica standard.
+
+    --- TERMINI ---
+    {elenco}
+    """
+    try:
+        risposta = llm.invoke([HumanMessage(content=prompt)])
+        righe = risposta.content.strip().splitlines()
+    except Exception as e:
+        print(f"[!] Generazione del glossario fallita ({e}).")
+        return ""
+    voci = []
+    for riga in righe:
+        if "::" not in riga:
+            continue
+        termine, definizione = riga.split("::", 1)
+        termine = termine.strip().strip("`").lstrip("-").strip()
+        definizione = _neutralizza_variabili_dollaro(_normalizza_simboli(definizione.strip()))
+        if termine and definizione:
+            voci.append(f"<dt><code>{termine}</code></dt><dd>{definizione}</dd>")
+    if not voci:
+        return ""
+    return '<dl class="glossario">\n' + "\n".join(voci) + "\n</dl>"
+
+
+def _genera_quiz(llm, contenuto: str, num_domande: int) -> str:
+    """Genera domande aperte di autovalutazione con risposta a scomparsa a partire
+    dal contenuto della dispensa. Torna HTML (o stringa vuota se fallisce)."""
+    if not contenuto.strip():
+        return ""
+    base = re.sub(r'<details class="slide-originale">.*?</details>', ' ', contenuto, flags=re.DOTALL)
+    prompt = f"""Sei un docente che prepara una verifica di autovalutazione.
+    Sulla base del testo qui sotto, formula {num_domande} domande aperte di comprensione,
+    dalla piu' semplice alla piu' articolata, ognuna con una risposta corretta e concisa.
+    Rispondi in italiano usando ESATTAMENTE questo formato, senza altro testo:
+    D:: <domanda>
+    R:: <risposta>
+    D:: <domanda>
+    R:: <risposta>
+
+    --- TESTO ---
+    {base[:14000]}
+    """
+    try:
+        risposta = llm.invoke([HumanMessage(content=prompt)])
+        testo = risposta.content.strip()
+    except Exception as e:
+        print(f"[!] Generazione del quiz fallita ({e}).")
+        return ""
+    coppie = []
+    domanda = None
+    for riga in testo.splitlines():
+        r = riga.strip()
+        if r.startswith("D::"):
+            domanda = r[3:].strip()
+        elif r.startswith("R::") and domanda:
+            risp = _neutralizza_variabili_dollaro(_normalizza_simboli(r[3:].strip()))
+            dom = _neutralizza_variabili_dollaro(_normalizza_simboli(domanda))
+            coppie.append((dom, risp))
+            domanda = None
+    if not coppie:
+        return ""
+    blocchi = [
+        f'<div class="quiz-item"><p class="quiz-q">{i}. {dom}</p>'
+        f'<details><summary>Mostra risposta</summary><p class="quiz-a">{risp}</p></details></div>'
+        for i, (dom, risp) in enumerate(coppie, start=1)
+    ]
+    return '<div class="quiz">\n' + "\n".join(blocchi) + "\n</div>"
+
+
+def _converti_blocchi_mermaid(html_doc: str) -> str:
+    """Trasforma i blocchi ```mermaid resi da markdown (<pre><code class="language-mermaid">)
+    in <pre class="mermaid"> che Mermaid.js sa disegnare, ripristinando i caratteri
+    (<, >, &) che il rendering markdown aveva convertito in entita' HTML."""
+    import html as _html
+
+    def _sostituisci(m):
+        return '<pre class="mermaid">' + _html.unescape(m.group(1)) + '</pre>'
+
+    return re.sub(
+        r'<pre><code class="language-mermaid">(.*?)</code></pre>',
+        _sostituisci, html_doc, flags=re.DOTALL,
+    )
+
+
+def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str,
+                        glossario_html: str = "", quiz_html: str = ""):
     # Rimappa i simboli PUA (tofu) del font Symbol prima di ogni altra cosa.
     s1, s2, s3 = _normalizza_simboli(s1), _normalizza_simboli(s2), _normalizza_simboli(s3)
 
@@ -656,6 +810,10 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         sezioni.append(("Spiegazione Dettagliata e Sviluppo", teoria_block))
     if html_aneddoti.strip():
         sezioni.append(("Ulteriori Spunti e Contenuti di Supporto", html_aneddoti))
+    if glossario_html.strip():
+        sezioni.append(("Glossario dei Termini Tecnici", glossario_html))
+    if quiz_html.strip():
+        sezioni.append(("Verifica di Autovalutazione", quiz_html))
     corpo_sezioni = "\n".join(
         f"            <h2>{i}. {titolo}</h2>\n            {contenuto}"
         for i, (titolo, contenuto) in enumerate(sezioni, start=1)
@@ -671,7 +829,7 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
             // Compatta i blocchi di codice piu' lunghi cosi' restano leggibili e
             // spezzano meno le pagine in stampa (soglie a numero di righe).
             document.addEventListener('DOMContentLoaded', function () {
-                document.querySelectorAll('pre').forEach(function (pre) {
+                document.querySelectorAll('pre:not(.mermaid)').forEach(function (pre) {
                     var righe = (pre.innerText.match(/\\n/g) || []).length + 1;
                     if (righe > 32) { pre.classList.add('code-lunghissimo'); }
                     else if (righe > 18) { pre.classList.add('code-lungo'); }
@@ -703,6 +861,17 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
             });
         </script>
 """
+
+    # --- Diagrammi Mermaid (opzionale) ---
+    if config.abilita_mermaid:
+        mermaid_head = """
+        <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+        </script>
+"""
+    else:
+        mermaid_head = ""
 
     # --- CSS opzionali ---
     css_extra = ""
@@ -771,6 +940,20 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         th { background-color: #2b6cb0; color: white; padding: 10px; text-align: left; }
         td { border: 1px solid #e2e8f0; padding: 10px; }
         tr:nth-child(even) { background-color: #f8fafc; }"""
+    if config.genera_glossario:
+        css_extra += """
+        dl.glossario dt { font-weight: 700; color: #1a365d; margin-top: 12px; }
+        dl.glossario dd { margin: 2px 0 0 0; color: #2d3748; }
+        dl.glossario code { background: #edf2f7; padding: 1px 5px; border-radius: 4px; }"""
+    if config.genera_quiz:
+        css_extra += """
+        .quiz-item { margin: 14px 0; padding: 12px 16px; background: #f7fafc; border-left: 4px solid #805ad5; border-radius: 0 6px 6px 0; page-break-inside: avoid; }
+        .quiz-q { font-weight: 600; color: #44337a; margin: 0 0 6px; }
+        .quiz details summary { cursor: pointer; color: #805ad5; font-weight: 600; font-size: 10pt; }
+        .quiz-a { margin: 8px 0 0; color: #2d3748; }"""
+    if config.abilita_mermaid:
+        css_extra += """
+        pre.mermaid { background: transparent; text-align: center; break-inside: avoid; page-break-inside: avoid; margin: 20px 0; }"""
 
     css_extra_block = f"        <style>{css_extra}\n        </style>\n" if css_extra else ""
 
@@ -790,6 +973,7 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 {highlight_head}
 {nav_head}
+{mermaid_head}
 {css_extra_block}
         <style>
             @page {{ size: A4; margin: 20mm 18mm; }}
@@ -871,6 +1055,8 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
 
     html_pulito = pulisci_meta_commenti(template_html)
     html_finale = genera_indice(html_pulito)
+    if config.abilita_mermaid:
+        html_finale = _converti_blocchi_mermaid(html_finale)
 
     with open(config.nome_output, 'w', encoding='utf-8') as f:
         f.write(html_finale)
@@ -997,12 +1183,28 @@ def run(config: PipelineConfig):
             "documento_finale": "",
         }
 
+        # Rigenerazione incrementale: se questo blocco (stesse slide, stesso testo,
+        # stessa memoria, stesso modello/prompt) e' gia' stato prodotto in un run
+        # precedente, riusa l'output dalla cache senza richiamare il modello.
+        chiave_gen = None
+        documento_cache = None
+        if config.cache_generazione:
+            chiave_gen = _chiave_generazione(
+                config.model, config.system_prompt_generazione, config.user_prompt_suffix,
+                slide_rilevanti_per_blocco, blocco, memoria_storica,
+            )
+            documento_cache = _leggi_cache_generazione(config.cache_dir, chiave_gen)
+
         successo = False
         tentativi_falliti = 0
         while not successo:
             try:
-                risultato = app.invoke(input_stato)
-                tg = risultato["documento_finale"]
+                da_cache = documento_cache is not None
+                if da_cache:
+                    tg = documento_cache
+                else:
+                    risultato = app.invoke(input_stato)
+                    tg = risultato["documento_finale"]
 
                 m1 = re.search(r"<concetti>(.*?)</concetti>", tg, re.DOTALL | re.IGNORECASE)
                 m2 = re.search(r"<spiegazione>(.*?)</spiegazione>", tg, re.DOTALL | re.IGNORECASE)
@@ -1052,10 +1254,19 @@ def run(config: PipelineConfig):
                 if m2 and m2.group(1).strip():
                     memoria_storica = m2.group(1).strip()[-config.memoria_caratteri:]
 
-                print(f"[✓] Blocco {indice} completato con successo!")
+                # Salva l'output validato in cache (solo se non veniva gia' da li').
+                if config.cache_generazione and not da_cache and chiave_gen:
+                    _scrivi_cache_generazione(config.cache_dir, chiave_gen, tg)
+
+                if da_cache:
+                    print(f"[✓] Blocco {indice} completato (riuso dalla cache, nessuna chiamata al modello).")
+                else:
+                    print(f"[✓] Blocco {indice} completato con successo!")
                 successo = True
 
-                if indice < len(blocchi_trascrizione):
+                # La pausa serve solo a non sovraccaricare il provider: se il blocco
+                # arriva dalla cache non abbiamo chiamato nessuno, quindi non attendere.
+                if indice < len(blocchi_trascrizione) and not da_cache:
                     print(f"    [Pausa] Attesa di {config.pausa_secondi} secondi per non sovraccaricare il provider...")
                     time.sleep(config.pausa_secondi)
 
@@ -1064,6 +1275,9 @@ def run(config: PipelineConfig):
                 raise SystemExit()
 
             except Exception as e:
+                # Un output in cache che non supera il cane da guardia non va riusato:
+                # forza una vera chiamata al modello al tentativo successivo.
+                documento_cache = None
                 tentativi_falliti += 1
                 # Backoff esponenziale: 30, 60, 120, 240... con tetto massimo (backoff_max).
                 attesa = min(config.pausa_retry * (2 ** (tentativi_falliti - 1)), config.backoff_max)
@@ -1132,7 +1346,27 @@ def run(config: PipelineConfig):
         print(f"[!] Errore durante la revisione finale ({e}). Uso la Sezione 3 originale.")
         sezione_3_pulita = sezione_3
 
+    # --- FASE 3b: ARRICCHIMENTI FINALI (glossario e autovalutazione) ---
+    glossario_html = ""
+    if config.genera_glossario:
+        termini = _raccogli_termini_tecnici(sezione_1, sezione_2, sezione_3_pulita)
+        if termini:
+            print(f"\n[GLOSSARIO] Definisco {len(termini)} termini tecnici...")
+            glossario_html = _genera_glossario(llm, termini)
+            if glossario_html:
+                print("[✓] Glossario generato.")
+        else:
+            print("\n[GLOSSARIO] Nessun termine tecnico tra backtick da definire: sezione omessa.")
+
+    quiz_html = ""
+    if config.genera_quiz:
+        print(f"\n[QUIZ] Genero {config.num_domande_quiz} domande di autovalutazione...")
+        quiz_html = _genera_quiz(llm, sezione_2, config.num_domande_quiz)
+        if quiz_html:
+            print("[✓] Quiz generato.")
+
     # --- FASE 4: ESPORTAZIONE IN HTML/PDF ---
-    salva_dispensa_html(config, sezione_1, sezione_2, sezione_3_pulita)
+    salva_dispensa_html(config, sezione_1, sezione_2, sezione_3_pulita,
+                        glossario_html=glossario_html, quiz_html=quiz_html)
 
     print(f"\n[SUCCESSO TOTALE] Pipeline completata. Apri '{config.nome_output}' nel browser e premi Ctrl+P per stampare in PDF!")

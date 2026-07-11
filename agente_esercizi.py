@@ -24,6 +24,7 @@ SYSTEM_PROMPT_GENERAZIONE = r"""Sei un Tutor Universitario e uno Scrittore Tecni
     8. FORMATO DI OUTPUT (CRITICO): È severamente vietato inserire frasi introduttive, convenevoli (es. "Ecco la rielaborazione") o conclusioni. Non usare MAI i titoli in Markdown (###) per dividere le sezioni. Devi produrre SOLO puro codice XML.
     9. VARIABILI YACC/BISON NEL TESTO: Le pseudo-variabili di Yacc/Bison (`$$`, `$1`, `$2`, `$3`, ...) quando le citi nel testo discorsivo vanno SEMPRE racchiuse tra i backtick (es. "il valore `$1` viene assegnato a `$$`"). Il simbolo del dollaro è riservato alle formule matematiche: se lo lasci nudo nel testo rompe il rendering. Dentro i blocchi di codice (```) invece lasciale così come sono, senza backtick.
     10. DIVIETO ASSOLUTO DI RIPETIZIONE (PENA IL FALLIMENTO): Il CONTESTO PRECEDENTE che ricevi elenca ciò che hai GIÀ scritto. È severamente vietato rispiegarlo, riassumerlo o riproporlo con parole diverse. Ogni paragrafo di <spiegazione> deve aggiungere informazione NUOVA e far AVANZARE la trattazione. Se un concetto è già stato coperto (es. la struttura del nodo `PNODE`, la tecnica di "ascensione"/monofase dei puntatori, la costruzione della lista `id-list`, l'assegnazione `$$ = $1`), dallo per acquisito e passa ai dettagli o agli aspetti non ancora trattati; NON ridefinire i campi o le funzioni ausiliarie già descritti. Se il frammento corrente non contiene nulla di realmente nuovo, produci una <spiegazione> BREVE (anche una sola frase) invece di gonfiarla ripetendo: un paragrafo corto e nuovo è sempre preferibile a uno lungo e ridondante.
+    11. DIAGRAMMI (MERMAID): Quando un albero sintattico, un automa (NFA/DFA), un grafo o un diagramma di flusso è utile alla comprensione, disegnalo con un blocco di codice ```mermaid usando la sintassi Mermaid (es. per un albero: `graph TD; E-->T; E-->+; E-->E2;` con etichette brevi; per un automa: `stateDiagram-v2`). Metti i diagrammi dentro <spiegazione> o <esercizio> (dove il Markdown viene reso), MAI dentro <concetti> o <digressioni>. Non forzare un diagramma se non serve, e non inserire i simboli del dollaro dentro le etichette Mermaid.
 
     Estrai le informazioni e classificale usando ESATTAMENTE E SOLTANTO questi quattro tag XML (senza nient'altro fuori):
 
@@ -86,6 +87,10 @@ config = PipelineConfig(
     print_rag_sources=True,
     usa_retriever_ibrido=True,  # richiede le dipendenze di requirements-hybrid.txt
     allega_slide_immagini=True,  # slide originale come immagine sotto ogni esercizio
+    genera_glossario=True,   # glossario finale dei termini tecnici
+    genera_quiz=True,        # sezione finale di autovalutazione
+    abilita_mermaid=True,    # diagrammi (alberi, automi) resi con Mermaid.js
+    cache_generazione=True,  # riusa i blocchi identici tra una rigenerazione e l'altra
 )
 
 
