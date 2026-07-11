@@ -15,6 +15,7 @@ import json
 import difflib
 import hashlib
 import argparse
+from collections import Counter
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -539,6 +540,69 @@ def genera_indice(testo_html: str) -> str:
         soup.body.insert(0, BeautifulSoup(indice_html, 'html.parser'))
 
     return str(soup)
+
+
+def verifica_invarianti_html(html_doc: str) -> list[str]:
+    """Controlla sul file HTML finale gli invarianti che altrimenti verificheremmo a
+    mano dopo ogni rigenerazione: niente simboli tofu (PUA), niente pseudo-variabili
+    Yacc nude nel testo, niente slide-immagine duplicate, indice coerente con i titoli
+    e numerazione progressiva, niente diagrammi mermaid non convertiti, un solo <h1>.
+    Torna la lista dei problemi trovati (vuota se e' tutto a posto)."""
+    problemi: list[str] = []
+    soup = BeautifulSoup(html_doc, 'html.parser')
+
+    # 1. Simboli PUA (tofu) residui: nessun codepoint della Private Use Area del BMP.
+    pua = sorted({c for c in html_doc if 0xE000 <= ord(c) <= 0xF8FF})
+    if pua:
+        problemi.append(f"Simboli PUA/tofu residui: {[hex(ord(c)) for c in pua]}")
+
+    # 2. Pseudo-variabili Yacc nude ($1, $2, ...) fuori da <code>/<pre>: la matematica
+    #    inline autentica usa lo spazio ($ x $), quindi un "$" attaccato a una cifra e
+    #    non preceduto da un altro "$" e' una variabile Yacc sfuggita al rendering.
+    soup_testo = BeautifulSoup(html_doc, 'html.parser')
+    for tag in soup_testo(['code', 'pre', 'script', 'style']):
+        tag.decompose()
+    fughe = re.findall(r'(?<!\$)\$\d', soup_testo.get_text())
+    if fughe:
+        problemi.append(f"Pseudo-variabili Yacc nude nel testo (${{N}} fuori da <code>): {len(fughe)} occorrenze")
+
+    # 3. Slide-immagine duplicate: la stessa immagine base64 incastonata piu' volte.
+    sorgenti = [img.get('src', '') for img in soup.find_all('img')
+                if img.get('src', '').startswith('data:image')]
+    duplicate = [n for n in Counter(sorgenti).values() if n > 1]
+    if duplicate:
+        problemi.append(f"Slide-immagine duplicate: {len(duplicate)} immagini ripetute")
+
+    # 4. Indice coerente: ogni voce punta a un titolo esistente e viceversa.
+    href_indice = [a.get('href', '')[1:] for a in soup.select('.indice a')
+                   if a.get('href', '').startswith('#')]
+    id_titoli = [t.get('id') for t in soup.find_all(['h2', 'h3']) if t.get('id')]
+    mancanti = [h for h in href_indice if h not in id_titoli]
+    if mancanti:
+        problemi.append(f"Voci d'indice che puntano a sezioni inesistenti: {mancanti}")
+    if len(href_indice) != len(id_titoli):
+        problemi.append(f"Indice e titoli non allineati: {len(href_indice)} voci vs {len(id_titoli)} titoli")
+
+    # 4b. Numerazione delle sezioni progressiva (1..N) senza salti ne' doppioni.
+    numeri = []
+    for t in soup.find_all('h2'):
+        if t.get('id'):
+            m = re.match(r'\s*(\d+)\.', t.get_text())
+            if m:
+                numeri.append(int(m.group(1)))
+    if numeri and numeri != list(range(1, len(numeri) + 1)):
+        problemi.append(f"Numerazione delle sezioni non progressiva: {numeri}")
+
+    # 5. Diagrammi mermaid non convertiti (rimasti come blocco di codice).
+    if 'language-mermaid' in html_doc:
+        problemi.append("Blocchi mermaid non convertiti (class='language-mermaid' presente)")
+
+    # 6. Un solo titolo principale.
+    n_h1 = len(soup.find_all('h1'))
+    if n_h1 != 1:
+        problemi.append(f"Numero di <h1> inatteso: {n_h1} (atteso 1)")
+
+    return problemi
 
 
 # Tabella di codifica del font Adobe "Symbol": codice carattere -> Unicode reale.
@@ -1086,6 +1150,52 @@ def _applica_override_cli(config: PipelineConfig):
     return config
 
 
+def _stampa_report(config: PipelineConfig, statistiche: dict):
+    """Stampa a terminale un riepilogo del run (blocchi, cache, retry, ripetizione,
+    arricchimenti) ed esegue i controlli invarianti sull'HTML appena scritto. Salva
+    lo stesso report in un file affiancato all'output (<nome_output>.report.txt)."""
+    generati = statistiche["blocchi_totali"] - statistiche["blocchi_da_cache"]
+    righe = [
+        "=" * 60,
+        "REPORT DI GENERAZIONE",
+        "=" * 60,
+        f"Blocchi elaborati       : {statistiche['blocchi_totali']} "
+        f"({statistiche['blocchi_da_cache']} da cache, {generati} generati)",
+        f"Retry del provider      : {statistiche['retry_totali']}",
+        f"Paragrafi teoria scartati (anti-ripetizione): {statistiche['teoria_scartata']}",
+        f"Similarita' massima     : {statistiche['max_similarita']:.2f} "
+        f"(soglia {config.soglia_antiripetizione:.2f})",
+        f"Slide-immagine allegate : {statistiche.get('slide_allegate', 0)}",
+        f"Concetti sintetizzati a posteriori: {'sì' if statistiche['concetti_sintetizzati'] else 'no'}",
+        f"Glossario               : {statistiche['glossario_termini']} termini",
+        f"Quiz                    : {statistiche['quiz_domande']} domande",
+        f"Revisione finale        : {'ok' if statistiche['revisione_ok'] else 'FALLITA (usata Sezione 3 grezza)'}",
+    ]
+
+    # Controlli invarianti sull'HTML finale (gli stessi del test di regressione).
+    try:
+        with open(config.nome_output, 'r', encoding='utf-8') as f:
+            problemi = verifica_invarianti_html(f.read())
+    except Exception as e:
+        problemi = [f"Impossibile rileggere l'HTML per i controlli: {e}"]
+
+    righe.append("-" * 60)
+    if not problemi:
+        righe.append("Controlli invarianti HTML: OK (nessun problema)")
+    else:
+        righe.append(f"Controlli invarianti HTML: {len(problemi)} PROBLEMA/I")
+        righe.extend(f"  - {p}" for p in problemi)
+    righe.append("=" * 60)
+
+    report = "\n".join(righe)
+    print("\n" + report)
+    try:
+        with open(config.nome_output + ".report.txt", 'w', encoding='utf-8') as f:
+            f.write(report + "\n")
+    except Exception:
+        pass
+
+
 def run(config: PipelineConfig):
     config = _applica_override_cli(config)
 
@@ -1133,6 +1243,19 @@ def run(config: PipelineConfig):
     paragrafi_teoria: list[str] = []    # storico per la guardia anti-ripetizione
     paragrafi_concetti: list[str] = []  # storico dei Concetti, per il cross-check con la teoria
     slide_allegate: set = set()         # (percorso, pagina) già incastonati: evita immagini doppie
+
+    # Contatori per il report di generazione finale.
+    statistiche = {
+        "blocchi_totali": len(blocchi_trascrizione),
+        "blocchi_da_cache": 0,
+        "retry_totali": 0,
+        "teoria_scartata": 0,
+        "max_similarita": 0.0,
+        "concetti_sintetizzati": False,
+        "glossario_termini": 0,
+        "quiz_domande": 0,
+        "revisione_ok": False,
+    }
 
     memoria_storica = "Questo è il primo blocco, inizia l'introduzione."
 
@@ -1225,11 +1348,15 @@ def run(config: PipelineConfig):
                     # Guardia anti-ripetizione: scarta il paragrafo se quasi-identico
                     # a uno già inserito nella teoria O nei Concetti (capita che il
                     # modello "eco-i" la memoria o riproponga il riassunto come teoria).
-                    duplicato = any(
-                        difflib.SequenceMatcher(None, testo_teoria, precedente).ratio() >= config.soglia_antiripetizione
+                    somiglianze = [
+                        difflib.SequenceMatcher(None, testo_teoria, precedente).ratio()
                         for precedente in paragrafi_teoria + paragrafi_concetti
-                    )
+                    ]
+                    max_somiglianza = max(somiglianze) if somiglianze else 0.0
+                    statistiche["max_similarita"] = max(statistiche["max_similarita"], max_somiglianza)
+                    duplicato = max_somiglianza >= config.soglia_antiripetizione
                     if duplicato:
+                        statistiche["teoria_scartata"] += 1
                         print("    [Anti-ripetizione] Paragrafo di teoria quasi-identico a teoria/Concetti già inseriti: scartato.")
                     else:
                         paragrafi_teoria.append(testo_teoria)
@@ -1259,6 +1386,7 @@ def run(config: PipelineConfig):
                     _scrivi_cache_generazione(config.cache_dir, chiave_gen, tg)
 
                 if da_cache:
+                    statistiche["blocchi_da_cache"] += 1
                     print(f"[✓] Blocco {indice} completato (riuso dalla cache, nessuna chiamata al modello).")
                 else:
                     print(f"[✓] Blocco {indice} completato con successo!")
@@ -1279,6 +1407,7 @@ def run(config: PipelineConfig):
                 # forza una vera chiamata al modello al tentativo successivo.
                 documento_cache = None
                 tentativi_falliti += 1
+                statistiche["retry_totali"] += 1
                 # Backoff esponenziale: 30, 60, 120, 240... con tetto massimo (backoff_max).
                 attesa = min(config.pausa_retry * (2 ** (tentativi_falliti - 1)), config.backoff_max)
                 print(f"    [!] Il provider ha avuto un mancamento (tentativo {tentativi_falliti}): {e}")
@@ -1310,6 +1439,7 @@ def run(config: PipelineConfig):
             testo_concetti = risposta_concetti.content.strip()
             if testo_concetti:
                 sezione_1 = testo_concetti + "\n\n"
+                statistiche["concetti_sintetizzati"] = True
                 print("[✓] Concetti sintetizzati e reintegrati nella dispensa.")
         except Exception as e:
             print(f"[!] Sintesi dei Concetti fallita ({e}). La sezione resta omessa.")
@@ -1341,6 +1471,7 @@ def run(config: PipelineConfig):
     try:
         risposta_revisore = llm.invoke([HumanMessage(content=prompt_revisione)])
         sezione_3_pulita = risposta_revisore.content.strip()
+        statistiche["revisione_ok"] = True
         print("[✓] Revisione completata! Doppioni eliminati con successo.")
     except Exception as e:
         print(f"[!] Errore durante la revisione finale ({e}). Uso la Sezione 3 originale.")
@@ -1354,6 +1485,7 @@ def run(config: PipelineConfig):
             print(f"\n[GLOSSARIO] Definisco {len(termini)} termini tecnici...")
             glossario_html = _genera_glossario(llm, termini)
             if glossario_html:
+                statistiche["glossario_termini"] = glossario_html.count("<dt>")
                 print("[✓] Glossario generato.")
         else:
             print("\n[GLOSSARIO] Nessun termine tecnico tra backtick da definire: sezione omessa.")
@@ -1363,10 +1495,15 @@ def run(config: PipelineConfig):
         print(f"\n[QUIZ] Genero {config.num_domande_quiz} domande di autovalutazione...")
         quiz_html = _genera_quiz(llm, sezione_2, config.num_domande_quiz)
         if quiz_html:
+            statistiche["quiz_domande"] = quiz_html.count('class="quiz-item"')
             print("[✓] Quiz generato.")
 
     # --- FASE 4: ESPORTAZIONE IN HTML/PDF ---
     salva_dispensa_html(config, sezione_1, sezione_2, sezione_3_pulita,
                         glossario_html=glossario_html, quiz_html=quiz_html)
+
+    # --- FASE 5: REPORT DI GENERAZIONE E CONTROLLI INVARIANTI ---
+    statistiche["slide_allegate"] = len(slide_allegate)
+    _stampa_report(config, statistiche)
 
     print(f"\n[SUCCESSO TOTALE] Pipeline completata. Apri '{config.nome_output}' nel browser e premi Ctrl+P per stampare in PDF!")
