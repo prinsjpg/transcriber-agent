@@ -585,10 +585,30 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
         s2_render = formatta_esercizi(s2) if config.has_esercizio else s2
         html_teoria = markdown.markdown(s2_render, extensions=list(config.markdown_extensions))
         teoria_block = f'<div class="theory-text">\n                {html_teoria}\n            </div>'
+        ha_teoria = bool(html_teoria.strip())
     else:
         teoria_block = formatta_paragrafi(s2, "theory-text")
+        ha_teoria = bool(teoria_block.strip())
 
     html_aneddoti = formatta_aneddoti(s3)
+
+    if not html_concetti.strip():
+        print("[!] Sezione 'Concetti' vuota: il modello non ha prodotto contenuto <concetti>.")
+
+    # Includi solo le sezioni con contenuto, numerandole dinamicamente: una sezione
+    # vuota (es. i Concetti non prodotti dal modello) non deve lasciare un titolo
+    # spoglio né una voce d'indice che punta al nulla.
+    sezioni = []
+    if html_concetti.strip():
+        sezioni.append(("Concetti Chiave e Nozioni Fondamentali", html_concetti))
+    if ha_teoria:
+        sezioni.append(("Spiegazione Dettagliata e Sviluppo", teoria_block))
+    if html_aneddoti.strip():
+        sezioni.append(("Ulteriori Spunti e Contenuti di Supporto", html_aneddoti))
+    corpo_sezioni = "\n".join(
+        f"            <h2>{i}. {titolo}</h2>\n            {contenuto}"
+        for i, (titolo, contenuto) in enumerate(sezioni, start=1)
+    )
 
     # --- Blocchi opzionali dell'head (Highlight.js) ---
     if config.enable_code_highlight:
@@ -730,12 +750,7 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
     <body>
         <div class="container">
             <h1>Dispensa Ufficiale del Corso</h1>
-            <h2>1. Concetti Chiave e Nozioni Fondamentali</h2>
-            {html_concetti}
-            <h2>2. Spiegazione Dettagliata e Sviluppo</h2>
-            {teoria_block}
-            <h2>3. Ulteriori Spunti e Contenuti di Supporto</h2>
-            {html_aneddoti}
+{corpo_sezioni}
         </div>
     </body>
     </html>
