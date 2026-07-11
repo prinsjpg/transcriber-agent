@@ -818,6 +818,7 @@ def run(config: PipelineConfig):
     sezione_1, sezione_2, sezione_3 = "", "", ""
     paragrafi_teoria: list[str] = []    # storico per la guardia anti-ripetizione
     paragrafi_concetti: list[str] = []  # storico dei Concetti, per il cross-check con la teoria
+    slide_allegate: set = set()         # (percorso, pagina) già incastonati: evita immagini doppie
 
     memoria_storica = "Questo è il primo blocco, inizia l'introduzione."
 
@@ -839,21 +840,26 @@ def run(config: PipelineConfig):
         slide_rilevanti_per_blocco = "\n\n".join([doc.page_content for doc in slide_recuperate])
 
         # Rende la slide più rilevante come immagine, da allegare all'eventuale
-        # esercizio di questo blocco (una volta per blocco).
+        # esercizio di questo blocco. Salta le slide già incastonate in un blocco
+        # precedente: la stessa pagina non va mostrata (né ri-renderizzata) due volte.
         slide_immagine_html = ""
+        slide_chiave = None
         if config.allega_slide_immagini and slide_recuperate:
             meta = slide_recuperate[0].metadata or {}
             if "percorso" in meta:
-                try:
-                    b64 = _rendi_pagina_pdf_base64(meta["percorso"], meta["pagina"], config.dpi_slide)
-                    slide_immagine_html = (
-                        '\n\n<details class="slide-originale">'
-                        f'<summary>📄 Slide originale — {meta.get("fonte", "")} (pag. {meta["pagina"] + 1})</summary>\n'
-                        f'<img src="data:image/png;base64,{b64}" alt="Slide originale"/>'
-                        '</details>\n\n'
-                    )
-                except Exception as e:
-                    print(f"    [!] Rendering della slide fallito: {e}")
+                chiave = (meta["percorso"], meta["pagina"])
+                if chiave not in slide_allegate:
+                    try:
+                        b64 = _rendi_pagina_pdf_base64(meta["percorso"], meta["pagina"], config.dpi_slide)
+                        slide_immagine_html = (
+                            '\n\n<details class="slide-originale">'
+                            f'<summary>📄 Slide originale — {meta.get("fonte", "")} (pag. {meta["pagina"] + 1})</summary>\n'
+                            f'<img src="data:image/png;base64,{b64}" alt="Slide originale"/>'
+                            '</details>\n\n'
+                        )
+                        slide_chiave = chiave
+                    except Exception as e:
+                        print(f"    [!] Rendering della slide fallito: {e}")
 
         input_stato = {
             "testo_slide": slide_rilevanti_per_blocco,
@@ -908,6 +914,8 @@ def run(config: PipelineConfig):
                     testo_ex = m_ex.group(1).strip() if m_ex else ""
                     frasi_vuote_ex = ["non presente", "nessun esercizio", "non viene risolto", "non ci sono esercizi", "nessun frammento"]
                     if testo_ex and not any(frase in testo_ex.lower() for frase in frasi_vuote_ex):
+                        if slide_chiave:
+                            slide_allegate.add(slide_chiave)
                         sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + slide_immagine_html + "\n</box_esercizio>\n\n"
 
                 if m3 and m3.group(1).strip():
