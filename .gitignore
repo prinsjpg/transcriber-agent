@@ -8,6 +8,10 @@ __pycache__/
 # Cache locale delle conversioni PDF->Markdown (file generati)
 .cache/
 
+# File di stato generati accanto all'output (checkpoint di ripresa e report del run)
+*.checkpoint.json
+*.report.txt
+
 # (Opzionale) Nasconde i tuoi file personali di test
 slide.pdf
 trascrizione.txt

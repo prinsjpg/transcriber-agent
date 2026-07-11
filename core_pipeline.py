@@ -77,6 +77,13 @@ class PipelineConfig:
     num_domande_quiz: int = 6             # quante domande generare per il quiz
     abilita_mermaid: bool = False         # rende i blocchi ```mermaid come diagrammi (Mermaid.js)
     cache_generazione: bool = False       # riusa l'output del modello per i blocchi identici (rigenerazione incrementale)
+    collega_glossario: bool = False       # rende cliccabile la prima occorrenza di ogni termine verso il glossario
+    # --- Verifica dei contenuti (LLM giudice) ---
+    verifica_contenuti: bool = False      # confronta ogni esercizio con le slide di riferimento e segnala le incoerenze
+    max_verifiche: int = 0                # numero massimo di esercizi da verificare (0 = tutti)
+    # --- Checkpoint / ripresa dei run ---
+    checkpoint: bool = False              # salva lo stato dopo ogni blocco per riprendere un run interrotto
+    checkpoint_file: str = ""             # percorso del checkpoint (vuoto = <nome_output>.checkpoint.json)
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
@@ -198,6 +205,56 @@ def _scrivi_cache_generazione(cache_dir: str, chiave: str, documento: str):
         os.makedirs(cache_dir, exist_ok=True)
         with open(os.path.join(cache_dir, f"gen_{chiave}.json"), 'w', encoding='utf-8') as f:
             json.dump({'documento_finale': documento}, f)
+    except Exception:
+        pass
+
+
+def _percorso_checkpoint(config: "PipelineConfig") -> str:
+    """Percorso del file di checkpoint (di default affiancato all'output)."""
+    return config.checkpoint_file or (config.nome_output + ".checkpoint.json")
+
+
+def _firma_run(blocchi: list, config: "PipelineConfig") -> str:
+    """Firma che identifica un run: modello, prompt e testo dei blocchi. Se cambia
+    qualcosa il checkpoint precedente non e' piu' valido e si riparte da zero."""
+    h = hashlib.md5()
+    h.update((config.model or "").encode("utf-8"))
+    h.update((config.system_prompt_generazione or "").encode("utf-8"))
+    h.update(str(len(blocchi)).encode("utf-8"))
+    for b in blocchi:
+        h.update((b or "").encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _salva_checkpoint(config: "PipelineConfig", dati: dict):
+    """Scrive su disco lo stato corrente della pipeline (dopo un blocco completato)."""
+    try:
+        with open(_percorso_checkpoint(config), 'w', encoding='utf-8') as f:
+            json.dump(dati, f)
+    except Exception:
+        pass
+
+
+def _carica_checkpoint(config: "PipelineConfig", firma: str):
+    """Restituisce lo stato salvato solo se la firma combacia col run corrente."""
+    percorso = _percorso_checkpoint(config)
+    if not os.path.exists(percorso):
+        return None
+    try:
+        with open(percorso, 'r', encoding='utf-8') as f:
+            dati = json.load(f)
+        if dati.get('firma') == firma:
+            return dati
+    except Exception:
+        return None
+    return None
+
+
+def _elimina_checkpoint(config: "PipelineConfig"):
+    """Rimuove il checkpoint a fine run (o quando non serve piu')."""
+    try:
+        os.remove(_percorso_checkpoint(config))
     except Exception:
         pass
 
@@ -807,6 +864,77 @@ def _converti_blocchi_mermaid(html_doc: str) -> str:
     )
 
 
+def _verifica_esercizio(llm, testo: str, slide: str) -> str:
+    """Confronta la risoluzione di un esercizio con le slide di riferimento e torna
+    le eventuali incoerenze (codice/grammatiche/assegnazioni sbagliate o non
+    supportate). Stringa vuota se e' tutto coerente."""
+    prompt = f"""Sei un revisore tecnico di compilatori. Confronta la RISOLUZIONE con le SLIDE.
+    Elenca in modo telegrafico SOLO le affermazioni della risoluzione che CONTRADDICONO le
+    slide o che NON sono da esse supportate (codice errato, grammatiche sbagliate, assegnazioni
+    o passaggi inventati). Ignora lo stile e le differenze di forma. Se e' tutto coerente,
+    rispondi ESATTAMENTE con "OK" e nient'altro. Non riscrivere la risoluzione.
+
+    --- SLIDE DI RIFERIMENTO ---
+    {slide[:8000]}
+
+    --- RISOLUZIONE DA VERIFICARE ---
+    {testo[:6000]}
+    """
+    try:
+        risposta = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+    except Exception as e:
+        return f"(verifica non riuscita: {e})"
+    if not risposta or risposta.upper().startswith("OK"):
+        return ""
+    return risposta
+
+
+def _slug(testo: str) -> str:
+    """Trasforma un termine in un identificatore adatto agli ancoraggi HTML."""
+    s = re.sub(r'[^a-z0-9]+', '-', testo.lower()).strip('-')
+    return s or "x"
+
+
+def _collega_glossario(html_doc: str, glossario_html: str) -> str:
+    """Assegna un id a ogni voce del glossario e rende la PRIMA occorrenza di ciascun
+    termine nel corpo (fra <code>, fuori dal glossario) un link cliccabile alla voce."""
+    if not glossario_html.strip():
+        return html_doc
+    soup = BeautifulSoup(html_doc, 'html.parser')
+    dl = soup.find('dl', class_='glossario')
+    if not dl:
+        return html_doc
+
+    termine_slug: dict[str, str] = {}
+    usati: set[str] = set()
+    for dt in dl.find_all('dt'):
+        code = dt.find('code')
+        termine = (code.get_text() if code else dt.get_text()).strip()
+        if not termine:
+            continue
+        slug = _slug(termine)
+        base, i = slug, 2
+        while slug in usati:
+            slug = f"{base}-{i}"
+            i += 1
+        usati.add(slug)
+        dt['id'] = f"glo-{slug}"
+        termine_slug.setdefault(termine.lower(), slug)
+
+    collegati: set[str] = set()
+    for code in soup.find_all('code'):
+        if code.find_parent('dl', class_='glossario') or code.find_parent('a'):
+            continue
+        chiave = code.get_text().strip().lower()
+        if chiave in termine_slug and chiave not in collegati:
+            a = soup.new_tag('a', href=f"#glo-{termine_slug[chiave]}")
+            a['class'] = 'rif-glossario'
+            code.wrap(a)
+            collegati.add(chiave)
+
+    return str(soup)
+
+
 def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str,
                         glossario_html: str = "", quiz_html: str = ""):
     # Rimappa i simboli PUA (tofu) del font Symbol prima di ogni altra cosa.
@@ -1008,7 +1136,9 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str,
         css_extra += """
         dl.glossario dt { font-weight: 700; color: #1a365d; margin-top: 12px; }
         dl.glossario dd { margin: 2px 0 0 0; color: #2d3748; }
-        dl.glossario code { background: #edf2f7; padding: 1px 5px; border-radius: 4px; }"""
+        dl.glossario code { background: #edf2f7; padding: 1px 5px; border-radius: 4px; }
+        a.rif-glossario { text-decoration: none; border-bottom: 1px dotted #2980b9; }
+        a.rif-glossario code { background: #eef6fc; }"""
     if config.genera_quiz:
         css_extra += """
         .quiz-item { margin: 14px 0; padding: 12px 16px; background: #f7fafc; border-left: 4px solid #805ad5; border-radius: 0 6px 6px 0; page-break-inside: avoid; }
@@ -1121,6 +1251,8 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str,
     html_finale = genera_indice(html_pulito)
     if config.abilita_mermaid:
         html_finale = _converti_blocchi_mermaid(html_finale)
+    if config.genera_glossario and config.collega_glossario:
+        html_finale = _collega_glossario(html_finale, glossario_html)
 
     with open(config.nome_output, 'w', encoding='utf-8') as f:
         f.write(html_finale)
@@ -1171,6 +1303,17 @@ def _stampa_report(config: PipelineConfig, statistiche: dict):
         f"Quiz                    : {statistiche['quiz_domande']} domande",
         f"Revisione finale        : {'ok' if statistiche['revisione_ok'] else 'FALLITA (usata Sezione 3 grezza)'}",
     ]
+
+    # Segnalazioni della verifica dei contenuti (LLM giudice), se attiva.
+    avvisi = statistiche.get("avvisi_verifica", [])
+    if avvisi:
+        righe.append("-" * 60)
+        righe.append(f"Verifica contenuti: {len(avvisi)} esercizi con possibili incoerenze")
+        for blocco, esito in avvisi:
+            testo_avviso = esito.replace("\n", " ").strip()
+            if len(testo_avviso) > 300:
+                testo_avviso = testo_avviso[:300] + "..."
+            righe.append(f"  - Blocco {blocco}: {testo_avviso}")
 
     # Controlli invarianti sull'HTML finale (gli stessi del test di regressione).
     try:
@@ -1258,9 +1401,34 @@ def run(config: PipelineConfig):
     }
 
     memoria_storica = "Questo è il primo blocco, inizia l'introduzione."
+    blocchi_completati = 0               # per la ripresa da checkpoint
+    verifiche_da_fare: list[dict] = []   # esercizi da confrontare con le slide (LLM giudice)
+
+    # --- RIPRESA DA CHECKPOINT ---
+    # Se un run precedente si e' interrotto, riparti dallo stato salvato invece di
+    # rifare tutti i blocchi gia' completati (utile sui provider free instabili).
+    firma_run = _firma_run(blocchi_trascrizione, config) if config.checkpoint else None
+    if config.checkpoint:
+        salvato = _carica_checkpoint(config, firma_run)
+        if salvato:
+            sezione_1 = salvato.get("sezione_1", "")
+            sezione_2 = salvato.get("sezione_2", "")
+            sezione_3 = salvato.get("sezione_3", "")
+            paragrafi_teoria = salvato.get("paragrafi_teoria", [])
+            paragrafi_concetti = salvato.get("paragrafi_concetti", [])
+            slide_allegate = {tuple(x) for x in salvato.get("slide_allegate", [])}
+            memoria_storica = salvato.get("memoria_storica", memoria_storica)
+            statistiche = salvato.get("statistiche", statistiche)
+            verifiche_da_fare = salvato.get("verifiche_da_fare", [])
+            blocchi_completati = salvato.get("blocchi_completati", 0)
+            print(f"\n[CHECKPOINT] Trovato stato salvato: riprendo dal blocco {blocchi_completati + 1} "
+                  f"di {len(blocchi_trascrizione)} (saltati {blocchi_completati} gia' fatti).")
 
     print("\n--- AVVIO ELABORAZIONE SEQUENZIALE (TOTALMENTE BLINDATA) ---")
     for indice, blocco in enumerate(blocchi_trascrizione, start=1):
+        if indice <= blocchi_completati:
+            continue  # gia' elaborato in un run precedente (ripreso da checkpoint)
+
         print(f"\n---> Avvio Elaborazione Blocco {indice} di {len(blocchi_trascrizione)}...")
 
         slide_recuperate = motore_ricerca.invoke(blocco)
@@ -1374,6 +1542,12 @@ def run(config: PipelineConfig):
                         if slide_chiave:
                             slide_allegate.add(slide_chiave)
                         sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + slide_immagine_html + "\n</box_esercizio>\n\n"
+                        if config.verifica_contenuti:
+                            verifiche_da_fare.append({
+                                "blocco": indice,
+                                "testo": testo_ex,
+                                "slide": slide_rilevanti_per_blocco,
+                            })
 
                 if m3 and m3.group(1).strip():
                     sezione_3 += m3.group(1).strip() + "\n\n"
@@ -1391,6 +1565,22 @@ def run(config: PipelineConfig):
                 else:
                     print(f"[✓] Blocco {indice} completato con successo!")
                 successo = True
+
+                # Checkpoint: salva lo stato completo cosi' un'interruzione riparte da qui.
+                if config.checkpoint:
+                    _salva_checkpoint(config, {
+                        "firma": firma_run,
+                        "blocchi_completati": indice,
+                        "sezione_1": sezione_1,
+                        "sezione_2": sezione_2,
+                        "sezione_3": sezione_3,
+                        "paragrafi_teoria": paragrafi_teoria,
+                        "paragrafi_concetti": paragrafi_concetti,
+                        "slide_allegate": [list(x) for x in slide_allegate],
+                        "memoria_storica": memoria_storica,
+                        "statistiche": statistiche,
+                        "verifiche_da_fare": verifiche_da_fare,
+                    })
 
                 # La pausa serve solo a non sovraccaricare il provider: se il blocco
                 # arriva dalla cache non abbiamo chiamato nessuno, quindi non attendere.
@@ -1477,6 +1667,23 @@ def run(config: PipelineConfig):
         print(f"[!] Errore durante la revisione finale ({e}). Uso la Sezione 3 originale.")
         sezione_3_pulita = sezione_3
 
+    # --- FASE 3a: VERIFICA DEI CONTENUTI (LLM giudice) ---
+    # Confronta ogni esercizio con le slide da cui e' stato tratto e segnala le
+    # affermazioni non supportate/contraddittorie (es. codice o assegnazioni sbagliate).
+    avvisi_verifica: list = []
+    if config.verifica_contenuti and verifiche_da_fare:
+        da_verificare = verifiche_da_fare[:config.max_verifiche] if config.max_verifiche else verifiche_da_fare
+        print(f"\n[VERIFICA] Controllo la coerenza di {len(da_verificare)} esercizi con le slide...")
+        for n, v in enumerate(da_verificare, start=1):
+            esito = _verifica_esercizio(llm, v["testo"], v["slide"])
+            if esito:
+                avvisi_verifica.append((v["blocco"], esito))
+                print(f"    [!] Blocco {v['blocco']}: possibili incoerenze rilevate.")
+            if n < len(da_verificare):
+                time.sleep(config.pausa_secondi)
+        print(f"[✓] Verifica completata: {len(avvisi_verifica)} esercizi con segnalazioni.")
+    statistiche["avvisi_verifica"] = avvisi_verifica
+
     # --- FASE 3b: ARRICCHIMENTI FINALI (glossario e autovalutazione) ---
     glossario_html = ""
     if config.genera_glossario:
@@ -1505,5 +1712,9 @@ def run(config: PipelineConfig):
     # --- FASE 5: REPORT DI GENERAZIONE E CONTROLLI INVARIANTI ---
     statistiche["slide_allegate"] = len(slide_allegate)
     _stampa_report(config, statistiche)
+
+    # Il run e' arrivato in fondo: il checkpoint non serve piu'.
+    if config.checkpoint:
+        _elimina_checkpoint(config)
 
     print(f"\n[SUCCESSO TOTALE] Pipeline completata. Apri '{config.nome_output}' nel browser e premi Ctrl+P per stampare in PDF!")

@@ -91,6 +91,9 @@ config = PipelineConfig(
     genera_quiz=True,        # sezione finale di autovalutazione
     abilita_mermaid=True,    # diagrammi (alberi, automi) resi con Mermaid.js
     cache_generazione=True,  # riusa i blocchi identici tra una rigenerazione e l'altra
+    collega_glossario=True,  # prima occorrenza di ogni termine cliccabile verso il glossario
+    checkpoint=True,         # riprende un run interrotto dallo stato salvato
+    verifica_contenuti=True, # confronta ogni esercizio con le slide e segnala le incoerenze (aggiunge chiamate LLM)
 )
 
 
