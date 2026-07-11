@@ -938,6 +938,13 @@ def run(config: PipelineConfig):
     # --- FASE 3: REVISIONE FINALE E DEDUPLICAZIONE ---
     print("\n[REVISIONE FINALE] Lettura incrociata per eliminare i doppioni dalla Sezione 3...")
 
+    # La revisione confronta solo il TESTO: togli le immagini base64 delle slide
+    # dalla Sezione 2, altrimenti (centinaia di KB) sforano il limite di token del
+    # provider. Le immagini non servono per deduplicare la Sezione 3.
+    sezione_2_per_revisione = re.sub(
+        r'<details class="slide-originale">.*?</details>', '', sezione_2, flags=re.DOTALL
+    )
+
     prompt_revisione = f"""Sei un revisore editoriale spietato.
     Qui sotto troverai due testi estratti da una lezione: la SEZIONE 2 (teoria e narrazione principale) e la SEZIONE 3 (digressioni extra).
     Il tuo UNICO compito è leggere la SEZIONE 3 e CANCELLARE qualsiasi aneddoto, storia o concetto che è già stato raccontato nella SEZIONE 2.
@@ -946,7 +953,7 @@ def run(config: PipelineConfig):
     RESTITUISCI SOLO ED ESCLUSIVAMENTE IL TESTO PULITO DELLA SEZIONE 3. Non aggiungere nessun meta-commento, titolo o introduzione.
 
     --- SEZIONE 2 (Testo di riferimento - GIA' PERFETTO) ---
-    {sezione_2}
+    {sezione_2_per_revisione}
 
     --- SEZIONE 3 (Testo da pulire e filtrare) ---
     {sezione_3}
