@@ -67,6 +67,8 @@ class PipelineConfig:
     enable_exercise_css: bool = False     # includi lo stile dei box esercizio
     enable_table_css: bool = False        # includi lo stile delle tabelle
     proteggi_variabili_dollaro: bool = True  # racchiude le pseudo-variabili Yacc ($$/$1) in <code> per non collidere con MathJax
+    allega_slide_immagini: bool = False   # [prototipo] incastona la slide PDF piu' rilevante come immagine sotto ogni esercizio
+    dpi_slide: int = 110                  # risoluzione di rendering delle pagine PDF in PNG
     print_rag_sources: bool = False       # stampa a terminale le slide consultate
     usa_cache: bool = True                # riusa le conversioni PDF->Markdown già fatte
     cache_dir: str = ".cache/markitdown"  # cartella su disco per la cache delle slide
@@ -164,20 +166,82 @@ def estrai_materiale_didattico(cartella: str, include_code: bool = False,
             print(f"    [!] Errore conversione {nome_file}: {e}")
 
     if include_code:
-        estensioni_codice = ['*.py', '*.js', '*.html', '*.java', '*.cpp', '*.c', '*.txt', '*.md']
-        file_codice = []
-        for est in estensioni_codice:
-            file_codice.extend(glob.glob(f"{cartella}/{est}"))
-        for percorso in file_codice:
-            nome_file = os.path.basename(percorso)
-            try:
-                with open(percorso, 'r', encoding='utf-8', errors='ignore') as f:
-                    contenuto = f.read()
-                    documenti.append(Document(page_content=f"--- SORGENTE CODICE: {nome_file} ---\n{contenuto}"))
-            except Exception:
-                pass
+        documenti.extend(_estrai_file_codice(cartella))
 
     return documenti
+
+
+def _estrai_file_codice(cartella: str) -> list[Document]:
+    """Allega al RAG i file di codice sorgente presenti nella cartella delle slide."""
+    documenti = []
+    estensioni_codice = ['*.py', '*.js', '*.html', '*.java', '*.cpp', '*.c', '*.txt', '*.md']
+    file_codice = []
+    for est in estensioni_codice:
+        file_codice.extend(glob.glob(f"{cartella}/{est}"))
+    for percorso in file_codice:
+        nome_file = os.path.basename(percorso)
+        try:
+            with open(percorso, 'r', encoding='utf-8', errors='ignore') as f:
+                contenuto = f.read()
+                documenti.append(Document(page_content=f"--- SORGENTE CODICE: {nome_file} ---\n{contenuto}"))
+        except Exception:
+            pass
+    return documenti
+
+
+def estrai_slide_per_pagina(cartella: str, include_code: bool = False) -> list[Document]:
+    """
+    Variante di ingestione a granularità di PAGINA per i soli PDF: produce un
+    Document per ogni pagina, con il testo estratto (via PyMuPDF) e i metadati
+    (percorso, numero di pagina, nome file) che servono poi a rendere quella
+    esatta pagina come immagine. Le pagine senza testo non sono indicizzabili dal
+    RAG lessicale/semantico e vengono saltate (limite noto del prototipo).
+    """
+    import fitz
+
+    documenti: list[Document] = []
+    file_pdf = sorted(glob.glob(f"{cartella}/*.pdf"))
+    if not file_pdf:
+        print(f"[!] Nessun PDF trovato in '{cartella}' per l'estrazione a pagina.")
+
+    for percorso in file_pdf:
+        nome_file = os.path.basename(percorso)
+        try:
+            doc = fitz.open(percorso)
+        except Exception as e:
+            print(f"    [!] Impossibile aprire {nome_file}: {e}")
+            continue
+        pagine_con_testo = 0
+        for n in range(doc.page_count):
+            testo = _normalizza_simboli(doc.load_page(n).get_text())
+            if not testo.strip():
+                continue
+            pagine_con_testo += 1
+            documenti.append(Document(
+                page_content=f"--- FONTE: {nome_file} (pag. {n + 1}) ---\n{testo}",
+                metadata={"percorso": percorso, "pagina": n, "fonte": nome_file},
+            ))
+        doc.close()
+        print(f"    - Slide indicizzate per pagina: {nome_file} ({pagine_con_testo} pagine con testo)")
+
+    if include_code:
+        documenti.extend(_estrai_file_codice(cartella))
+
+    return documenti
+
+
+def _rendi_pagina_pdf_base64(percorso: str, pagina: int, dpi: int = 110) -> str:
+    """Rende una singola pagina PDF in PNG e la restituisce come stringa base64."""
+    import base64
+    import fitz
+
+    doc = fitz.open(percorso)
+    try:
+        pix = doc.load_page(pagina).get_pixmap(dpi=dpi)
+        png = pix.tobytes("png")
+    finally:
+        doc.close()
+    return base64.b64encode(png).decode("ascii")
 
 
 def dividi_trascrizione_in_blocchi(testo: str, max_parole: int = 1500, overlap_parole: int = 150) -> list[str]:
@@ -542,6 +606,26 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str):
             border-bottom: 1px solid #bbf7d0;
             padding-bottom: 5px;
         }"""
+    if config.allega_slide_immagini:
+        css_extra += """
+        details.slide-originale { margin-top: 14px; }
+        details.slide-originale summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #166534;
+            font-size: 9.5pt;
+            list-style: none;
+        }
+        details.slide-originale summary::before { content: "▸ "; }
+        details.slide-originale[open] summary::before { content: "▾ "; }
+        details.slide-originale img {
+            max-width: 100%;
+            height: auto;
+            margin-top: 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        }"""
     if config.enable_table_css:
         css_extra += """
         table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 10.5pt; }
@@ -661,12 +745,16 @@ def run(config: PipelineConfig):
     trascrizione_completa = estrai_testo_da_cartella_txt(config.cartella_trascrizioni)
 
     print(f"\n[RAG] Lettura di tutti i documenti nella cartella '{config.cartella_slide}'...")
-    documenti_slide = estrai_materiale_didattico(
-        config.cartella_slide,
-        include_code=config.include_code_files,
-        usa_cache=config.usa_cache,
-        cache_dir=config.cache_dir,
-    )
+    if config.allega_slide_immagini:
+        print("[RAG] Modalità immagini attiva: indicizzazione delle slide PDF a granularità di pagina.")
+        documenti_slide = estrai_slide_per_pagina(config.cartella_slide, include_code=config.include_code_files)
+    else:
+        documenti_slide = estrai_materiale_didattico(
+            config.cartella_slide,
+            include_code=config.include_code_files,
+            usa_cache=config.usa_cache,
+            cache_dir=config.cache_dir,
+        )
 
     if not documenti_slide:
         print("[!] ERRORE GRAVE: Nessun documento valido trovato. Impossibile creare il motore di ricerca.")
@@ -698,6 +786,23 @@ def run(config: PipelineConfig):
             print(f"    [RAG] Consultando le slide: {testo_fonti}")
 
         slide_rilevanti_per_blocco = "\n\n".join([doc.page_content for doc in slide_recuperate])
+
+        # [prototipo] Rende la slide più rilevante come immagine, da allegare
+        # all'eventuale esercizio di questo blocco (una volta per blocco).
+        slide_immagine_html = ""
+        if config.allega_slide_immagini and slide_recuperate:
+            meta = slide_recuperate[0].metadata or {}
+            if "percorso" in meta:
+                try:
+                    b64 = _rendi_pagina_pdf_base64(meta["percorso"], meta["pagina"], config.dpi_slide)
+                    slide_immagine_html = (
+                        '\n\n<details class="slide-originale">'
+                        f'<summary>📄 Slide originale — {meta.get("fonte", "")} (pag. {meta["pagina"] + 1})</summary>\n'
+                        f'<img src="data:image/png;base64,{b64}" alt="Slide originale"/>'
+                        '</details>\n\n'
+                    )
+                except Exception as e:
+                    print(f"    [!] Rendering della slide fallito: {e}")
 
         input_stato = {
             "testo_slide": slide_rilevanti_per_blocco,
@@ -752,7 +857,7 @@ def run(config: PipelineConfig):
                     testo_ex = m_ex.group(1).strip() if m_ex else ""
                     frasi_vuote_ex = ["non presente", "nessun esercizio", "non viene risolto", "non ci sono esercizi", "nessun frammento"]
                     if testo_ex and not any(frase in testo_ex.lower() for frase in frasi_vuote_ex):
-                        sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + "\n</box_esercizio>\n\n"
+                        sezione_2 += "\n\n<box_esercizio>\n" + testo_ex + slide_immagine_html + "\n</box_esercizio>\n\n"
 
                 if m3 and m3.group(1).strip():
                     sezione_3 += m3.group(1).strip() + "\n\n"

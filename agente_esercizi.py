@@ -84,6 +84,7 @@ config = PipelineConfig(
     enable_table_css=True,
     print_rag_sources=True,
     usa_retriever_ibrido=True,  # richiede le dipendenze di requirements-hybrid.txt
+    allega_slide_immagini=True,  # [prototipo] slide originale come immagine sotto ogni esercizio
 )
 
 
