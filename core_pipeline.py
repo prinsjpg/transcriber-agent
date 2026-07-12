@@ -750,6 +750,36 @@ def _tempo_lettura_minuti(*testi: str, parole_al_minuto: int = 200) -> int:
     return max(1, round(n_parole / parole_al_minuto))
 
 
+# Parole comuni (italiane/di servizio) che finiscono tra i backtick ma non sono termini
+# tecnici da glossario.
+_STOPWORD_GLOSSARIO = {
+    "a", "ad", "ai", "al", "alla", "alle", "agli", "come", "con", "che", "chi",
+    "da", "dai", "dal", "dei", "del", "della", "delle", "di", "do", "dove", "e",
+    "ed", "gli", "ha", "hanno", "i", "il", "in", "la", "le", "lo", "ma", "ne",
+    "nei", "nel", "nella", "non", "o", "od", "per", "più", "poi", "quando",
+    "questa", "questo", "se", "si", "su", "sul", "sono", "tra", "un", "una", "uno",
+}
+
+
+def _e_termine_glossario(termine: str) -> bool:
+    """Filtra i candidati del glossario: scarta stopword, produzioni di grammatica
+    (contengono `→`/`->`), espressioni booleane e frasi in linguaggio naturale,
+    tenendo solo gli identificatori tecnici (token, campi, classi)."""
+    if len(termine) < 2 or len(termine) > 40:
+        return False
+    if termine.lower() in _STOPWORD_GLOSSARIO:
+        return False
+    if "→" in termine or "->" in termine:  # produzione di grammatica, non un termine
+        return False
+    delimitato = f" {termine.lower()} "
+    if " or " in delimitato or " and " in delimitato:  # espressione, non un termine
+        return False
+    # più parole tutte minuscole senza segni da identificatore = frase/frammento discorsivo
+    if " " in termine and re.fullmatch(r"[a-zàèéìòùç ]+", termine):
+        return False
+    return True
+
+
 def _raccogli_termini_tecnici(*sezioni: str, massimo: int = 60) -> list[str]:
     """Estrae i termini tra backtick (nomi di token/variabili/classi, per la regola 5
     del prompt) dalle sezioni, escludendo i blocchi di codice e le pseudo-variabili
@@ -759,7 +789,9 @@ def _raccogli_termini_tecnici(*sezioni: str, massimo: int = 60) -> list[str]:
     visti: dict[str, str] = {}
     for m in re.finditer(r"`([^`\n]+)`", testo):
         termine = m.group(1).strip()
-        if not termine or termine.startswith("$") or len(termine) > 40:
+        if not termine or termine.startswith("$"):
+            continue
+        if not _e_termine_glossario(termine):
             continue
         chiave = termine.lower()
         if chiave not in visti:
@@ -962,9 +994,23 @@ def salva_dispensa_html(config: PipelineConfig, s1: str, s2: str, s3: str,
         return html
 
     def formatta_aneddoti(testo):
+        frasi_vuote = ["non sono presenti digressioni", "non emergono nel frammento", "non sono presenti aneddoti", "nessun aneddoto", "nessuna digressione"]
+        # Se il modello ha (erroneamente) infilato un blocco di codice ``` tra le
+        # digressioni, il testo grezzo lascerebbe i fence letterali e le pseudo-variabili
+        # Yacc ($1, $$) nude nel testo. In quel caso rendo l'intera sezione con Markdown,
+        # così il codice finisce in <pre><code> (protetto) invece che in un <p>.
+        if "```" in testo:
+            corpo = markdown.markdown(testo, extensions=list(config.markdown_extensions))
+            if not corpo.strip():
+                return ""
+            return f"""
+                <div class="anecdote-box">
+                    <div class="anecdote-title">💡 Spunto di Riflessione / Digressione</div>
+                    <div class="anecdote-content">{corpo}</div>
+                </div>
+                """
         paragrafi = testo.strip().split('\n\n')
         html = ""
-        frasi_vuote = ["non sono presenti digressioni", "non emergono nel frammento", "non sono presenti aneddoti", "nessun aneddoto", "nessuna digressione"]
         for p in paragrafi:
             testo_p = p.strip()
             if testo_p and not any(frase in testo_p.lower() for frase in frasi_vuote):
